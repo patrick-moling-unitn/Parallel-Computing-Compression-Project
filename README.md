@@ -8,7 +8,7 @@ Download the files from git and copy the folder into the cluster
 > scp -r ./YourGitFolderName/ yourname.yoursurname@hpc.unitn.it:~/YourDestinationFolder
 
 Inside your cluster, in YourDestinationFolder, compile the **main.cpp**
-> g++ -std=c++11 -fopenmp -o main main.cpp mmio.c
+> g++ -std=c++11 -fopenmp -o main main.cpp
 
 In case of errors due to Windows' *^M* execute the following commands and repeat the compilation attempt
 > dos2unix schedulable_job.pbs

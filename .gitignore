@@ -1,0 +1,11 @@
+# Ignore all DevCpp files
+*.dev
+
+# Ignore all testing files
+*.txt
+*.png
+*.jpg
+*.jpeg
+
+# Ignore all possible logs
+*.log
