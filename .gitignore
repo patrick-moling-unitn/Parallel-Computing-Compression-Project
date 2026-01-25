@@ -11,6 +11,10 @@
 *.png
 *.jpg
 *.jpeg
+*.bmp
+*.raw
+*.CR2
+*.data
 
 # Ignore all possible logs
 *.log

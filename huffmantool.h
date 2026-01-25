@@ -64,10 +64,11 @@ class huffmantool
     void prettyPrint(int const);
     void printSeparator();
     int lposSlash(std::string const);
+    bool isImageFile(const std::string& filename);
 
 public:
     std::string compressFile(std::string, std::string);
-    std::string decompressFile(std::string, std::string);
+    std::string decompressFile(std::string, std::string, std::string);
     //>> Added for future MPI implementations (Division for chuncks)
     std::string compressString(const std::string &input);
     std::string decompressString(const std::string &input);
@@ -162,6 +163,12 @@ int huffmantool::lposSlash(std::string const filename)
     return pos;
 }
 
+bool huffmantool::isImageFile(const std::string& filename) {
+    std::string extension = filename.substr(filename.find_last_of(".") + 1);
+    for (auto &character : extension) character = std::tolower(character);
+    return (extension == "bmp" || extension == "raw" || extension == "pgm" || extension == "ppm");
+}
+
 /**
  * @brief Compress the given file
  * 
@@ -183,26 +190,45 @@ std::string huffmantool::compressFile(std::string sourceFile, std::string compre
         std::cerr << "ERROR: No such file exists or cannot open file " + sourceFile;
         return "";
     }
+    bool sourceIsImage = isImageFile(sourceFile);
     // map for index in vector
     std::unordered_map<char, int> *index = new std::unordered_map<char, int>;
     std::vector<cfp *> freq_store;
     char ch;
     int numChars = 0;
     // [2]
-    while (reader.read(&ch, 1))
-    {
-        numChars++;
-        if (index->count(ch) > 0)
-        {
-            int ind = index->at(ch);
-            freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
-        }
-        else
-        {
-            index->insert({ch, freq_store.size()});
-            freq_store.push_back(new cfp(ch, 1));
-        }
-    }
+    if (sourceIsImage){
+    	char prev = 0;
+	    while (reader.read(&ch, 1)) {
+	        char value = ch - prev;
+	        prev = ch;
+	
+	        // Usa 'value' per aggiornare freq_store
+	        numChars++;
+	        if (index->count(value) > 0) {
+	            int ind = index->at(value);
+	            freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
+	        } else {
+	            index->insert({value, freq_store.size()});
+	            freq_store.push_back(new cfp(value, 1));
+	        }
+	    }
+	}else{
+	    while (reader.read(&ch, 1))
+	    {
+	        numChars++;
+	        if (index->count(ch) > 0)
+	        {
+	            int ind = index->at(ch);
+	            freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
+	        }
+	        else
+	        {
+	            index->insert({ch, freq_store.size()});
+	            freq_store.push_back(new cfp(ch, 1));
+	        }
+	    }
+	}
     reader.close();
     delete index;
     if (freq_store.size() <= 1)
@@ -248,21 +274,43 @@ std::string huffmantool::compressFile(std::string sourceFile, std::string compre
     writer.write(reinterpret_cast<char*>(&numChars), sizeof(numChars));
     char chr = 0;
     int bufferSize = 8;
-    while (reader.read(&ch, 1))
-    {
-        std::string bin = charKeyMap[ch];
-        for (unsigned int i = 0; i < bin.length(); i++)
-        {
-            chr = (chr << 1) ^ (bin[i] - '0');
-            bufferSize--;
-            if (bufferSize == 0)
-            {
-                writer.write(&chr, 1);
-                chr = 0;
-                bufferSize = 8;
-            }
-        }
-    }
+    
+    if (sourceIsImage){
+    	char prev = 0;
+	    while (reader.read(&ch, 1)) {
+	        char value = ch - prev;
+	        prev = ch;
+	
+	        std::string bin = charKeyMap[value];
+	        for (unsigned int i = 0; i < bin.length(); i++)
+	        {
+	            chr = (chr << 1) ^ (bin[i] - '0');
+	            bufferSize--;
+	            if (bufferSize == 0)
+	            {
+	                writer.write(&chr, 1);
+	                chr = 0;
+	                bufferSize = 8;
+	            }
+	        }
+	    }
+	}else{
+	    while (reader.read(&ch, 1))
+	    {
+	        std::string bin = charKeyMap[ch];
+	        for (unsigned int i = 0; i < bin.length(); i++)
+	        {
+	            chr = (chr << 1) ^ (bin[i] - '0');
+	            bufferSize--;
+	            if (bufferSize == 0)
+	            {
+	                writer.write(&chr, 1);
+	                chr = 0;
+	                bufferSize = 8;
+	            }
+	        }
+	    }
+	}
     if (bufferSize)
     {
         chr = chr << bufferSize;
@@ -280,8 +328,9 @@ std::string huffmantool::compressFile(std::string sourceFile, std::string compre
  * @param retrievedFile Path of the decompressed file. Default: path/"decompressed_"+compressedFile.extension
  * @return std::string Returns the path of the retrieved file. If some error occurs, returns empty string
  */
-std::string huffmantool::decompressFile(std::string compressedFile, std::string retrievedFile = "")
+std::string huffmantool::decompressFile(std::string compressedFile, std::string retrievedFile = "", std::string originalFileName = "")
 {
+    bool sourceIsImage = isImageFile(originalFileName);
     if (retrievedFile == "")
     {
         int pos = lposSlash(compressedFile);
@@ -312,24 +361,46 @@ std::string huffmantool::decompressFile(std::string compressedFile, std::string 
     std::string key = "";
     int readChars = 0;
     char ch;
-    while (reader.read(&ch, 1) && readChars != totalChars)
-    {
-        // [3]
-        std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
-        for (unsigned int i = 0; i < bin_read.length(); i++)
-        {
-            key += bin_read[i];
-            if (keyCharMap.count(key) > 0)
-            {
-            	char out = keyCharMap[key];
-				writer.write(&out, 1);
-                key = "";
-                readChars++;
-                if (readChars == totalChars)
-                    break;
-            }
-        }
-    }
+    if (sourceIsImage){
+    	char prev = 0;
+	    while (reader.read(&ch, 1) && readChars != totalChars) {
+	        // Decodifica Huffman come negli altri casi:
+	        std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
+	        for (unsigned int i = 0; i < bin_read.length(); i++) {
+	            key += bin_read[i];
+	            if (keyCharMap.count(key) > 0) {
+	                char value = keyCharMap[key];
+	                char out = value + prev;   // applico il differenziale
+	                prev = out;
+	                writer.write(&out, 1);
+	                key = "";                  // qui serve
+	                readChars++;
+	                if (readChars == totalChars)
+	                    break;
+	            }
+	        }
+	    }
+	}else {
+		while (reader.read(&ch, 1) && readChars != totalChars)
+	    {
+	        // [3]
+	        std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
+	        for (unsigned int i = 0; i < bin_read.length(); i++)
+	        {
+	            key += bin_read[i];
+	            if (keyCharMap.count(key) > 0)
+	            {
+	            	char out = keyCharMap[key];
+					writer.write(&out, 1);
+	                key = "";
+	                readChars++;
+	                if (readChars == totalChars)
+	                    break;
+	            }
+	        }
+	    }
+	}
+    
     reader.close();
     writer.close();
     if (readChars != totalChars)
@@ -367,10 +438,10 @@ std::string huffmantool::compressString(const std::string &input)
 
     if (freq_store.size() <= 1) {
         std::cout << "INFO: No need for encryption\n";
-        return "";  // Se c'ï¿½ solo un carattere, non serve compressione
+        return "";  // Se c'è solo un carattere, non serve compressione
     }
 
-    // Creazione della coda di prioritï¿½ per i nodi di Huffman
+    // Creazione della coda di priorità per i nodi di Huffman
     std::priority_queue<cfp *, std::vector<cfp *>, pairComparator> freq_sorted;
     for (auto i : freq_store) {
         freq_sorted.push(i);
@@ -495,7 +566,7 @@ void huffmantool::benchmark(std::string sourceFile)
     auto compression_time = std::chrono::duration_cast<std::chrono::microseconds>(end_compression - start_compression);
 
     auto start_decompression = std::chrono::high_resolution_clock::now();
-    std::string retrievedFile = decompressFile(compressedFile);
+    std::string retrievedFile = decompressFile(compressedFile, sourceFile);
     if (retrievedFile == "")
         return;
     auto end_decompression = std::chrono::high_resolution_clock::now();

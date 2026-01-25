@@ -19,9 +19,16 @@ void AnalizeCompressionRatio(string original, string compressed){
 
 int main(int argc, char** argv)
 {
+	string filename = "";
+	cout << "Please write the filename of what you'd like to compress (including type: '.txt/.raw/.bmp/etc.'): ";
+	cin >> filename;
+	
+	// Website containing free raw pictures https://www.lapseoftheshutter.com/free-raw-landscape-images-for-retouching/ -> cr2 to bmp conversion needed!
+	// Why doesn't this algorithm work with normal jpg/png/cr2? Short answer: those formats are already compressed (jpg/png) and/or ordered (cr2)
+	
 	huffmantool ht;
-	ht.compressFile("test.txt", "compressed.txt");
-	ht.decompressFile("compressed.txt", "decompressed.txt");
+	ht.compressFile(filename, "compressed.data");
+	ht.decompressFile("compressed.data", "decompressed_"+filename, filename);
 	
 	string originalData = "Hello World!";
 	string compressedData = ht.compressString(originalData);
