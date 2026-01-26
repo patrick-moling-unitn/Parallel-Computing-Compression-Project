@@ -45,9 +45,10 @@ int main(int argc, char** argv)
     while (getline(reader, line)) {
     	fileContent += line + "\n";
     }
+    bool sourceIsImage = ht.isImageFile(filename);
 	
 	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
-	string compressedData = ht.compressString(fileContent);
+	string compressedData = ht.compressString(fileContent, sourceIsImage);
 	
 	//--Then we write the compressed data
     std::ofstream writer;
@@ -56,7 +57,7 @@ int main(int argc, char** argv)
     writer.close();
     
     //*Also useful for MPI splitting
-	string decompressed = ht.decompressString(compressedData);
+	string decompressed = ht.decompressString(compressedData, sourceIsImage);
 	
 	//--Then we write the decompressed data
     writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);

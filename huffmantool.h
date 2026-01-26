@@ -64,16 +64,17 @@ class huffmantool
     void prettyPrint(int const);
     void printSeparator();
     int lposSlash(std::string const);
-    bool isImageFile(const std::string& filename);
 
 public:
     std::string compressFile(std::string, std::string);
     std::string decompressFile(std::string, std::string, std::string);
     //>> Added for future MPI implementations (Division for chuncks)
-    std::string compressString(const std::string &input);
-    std::string decompressString(const std::string &input);
+    std::string compressString(const std::string &input, bool sourceIsImage);
+    std::string decompressString(const std::string &input, bool sourceIsImage);
     //<<
     void benchmark(std::string);
+    
+    bool isImageFile(const std::string& filename);
 };
 
 // ******************************
@@ -203,7 +204,6 @@ std::string huffmantool::compressFile(std::string sourceFile, std::string compre
 	        char value = ch - prev;
 	        prev = ch;
 	
-	        // Usa 'value' per aggiornare freq_store
 	        numChars++;
 	        if (index->count(value) > 0) {
 	            int ind = index->at(value);
@@ -213,7 +213,8 @@ std::string huffmantool::compressFile(std::string sourceFile, std::string compre
 	            freq_store.push_back(new cfp(value, 1));
 	        }
 	    }
-	}else{
+	}else
+	{
 	    while (reader.read(&ch, 1))
 	    {
 	        numChars++;
@@ -294,7 +295,8 @@ std::string huffmantool::compressFile(std::string sourceFile, std::string compre
 	            }
 	        }
 	    }
-	}else{
+	}else
+	{
 	    while (reader.read(&ch, 1))
 	    {
 	        std::string bin = charKeyMap[ch];
@@ -364,26 +366,25 @@ std::string huffmantool::decompressFile(std::string compressedFile, std::string 
     if (sourceIsImage){
     	char prev = 0;
 	    while (reader.read(&ch, 1) && readChars != totalChars) {
-	        // Decodifica Huffman come negli altri casi:
 	        std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
 	        for (unsigned int i = 0; i < bin_read.length(); i++) {
 	            key += bin_read[i];
 	            if (keyCharMap.count(key) > 0) {
 	                char value = keyCharMap[key];
-	                char out = value + prev;   // applico il differenziale
+	                char out = value + prev;  
 	                prev = out;
 	                writer.write(&out, 1);
-	                key = "";                  // qui serve
+	                key = "";           
 	                readChars++;
 	                if (readChars == totalChars)
 	                    break;
 	            }
 	        }
 	    }
-	}else {
+	}else 
+	{
 		while (reader.read(&ch, 1) && readChars != totalChars)
 	    {
-	        // [3]
 	        std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
 	        for (unsigned int i = 0; i < bin_read.length(); i++)
 	        {
@@ -412,7 +413,7 @@ std::string huffmantool::decompressFile(std::string compressedFile, std::string 
 };
 
 //ChatGPT Helped in rewriting the compression just for a string - very good understanding of streams was the key
-std::string huffmantool::compressString(const std::string &input)
+std::string huffmantool::compressString(const std::string &input, bool sourceIsImage)
 {
     // Mappa per l'indice nel vettore
     std::unordered_map<char, int> *index = new std::unordered_map<char, int>;
@@ -424,24 +425,43 @@ std::string huffmantool::compressString(const std::string &input)
     std::stringstream reader(input);
     
     // Passo 1: Creiamo la mappa delle frequenze
-    while (reader.read(&ch, 1)) {
-        numChars++;
-        if (index->count(ch) > 0) {
-            int ind = index->at(ch);
-            freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
-        } else {
-            index->insert({ch, freq_store.size()});
-            freq_store.push_back(new cfp(ch, 1));
+    if (sourceIsImage){
+        char prev = 0;
+        while (reader.read(&ch, 1))
+        {
+            char value = ch - prev;
+            prev = ch;
+
+            numChars++;
+            if (index->count(value) > 0) {
+                int ind = index->at(value);
+                freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
+            } else {
+                index->insert({value, freq_store.size()});
+                freq_store.push_back(new cfp(value, 1));
+            }
+        }
+    }else
+    { 
+        while (reader.read(&ch, 1)) {
+            numChars++;
+            if (index->count(ch) > 0) {
+                int ind = index->at(ch);
+                freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
+            } else {
+                index->insert({ch, freq_store.size()});
+                freq_store.push_back(new cfp(ch, 1));
+            }
         }
     }
     delete index;
 
     if (freq_store.size() <= 1) {
         std::cout << "INFO: No need for encryption\n";
-        return "";  // Se c'è solo un carattere, non serve compressione
+        return "";  // Se c'Ã¨ solo un carattere, non serve compressione
     }
 
-    // Creazione della coda di priorità per i nodi di Huffman
+    // Creazione della coda di prioritÃ  per i nodi di Huffman
     std::priority_queue<cfp *, std::vector<cfp *>, pairComparator> freq_sorted;
     for (auto i : freq_store) {
         freq_sorted.push(i);
@@ -479,19 +499,42 @@ std::string huffmantool::compressString(const std::string &input)
     int bufferSize = 8;
 
     // Scriviamo la stringa compressa nel stringstream
-    for (unsigned int i = 0; i < input.length(); i++) {
-        std::string bin = charKeyMap[input[i]];
-        for (unsigned int j = 0; j < bin.length(); j++) {
-            chr = (chr << 1) ^ (bin[j] - '0');
-            bufferSize--;
-            if (bufferSize == 0) {
-                compressedData.write(&chr, 1);
-                chr = 0;
-                bufferSize = 8;
+    if (sourceIsImage){
+        char prev = 0;
+        for (char ch : input)
+        {
+            char value = ch - prev;
+            prev = ch;
+
+            const std::string &bin = charKeyMap[value];
+            for (char b : bin)
+            {
+                chr = (chr << 1) | (b - '0');
+                bufferSize--;
+                if (bufferSize == 0)
+                {
+                    compressedData.write(&chr, 1);
+                    chr = 0;
+                    bufferSize = 8;
+                }
+            }
+        }
+    }else
+	{
+        for (unsigned int i = 0; i < input.length(); i++) {
+            std::string bin = charKeyMap[input[i]];
+            for (unsigned int j = 0; j < bin.length(); j++) {
+                chr = (chr << 1) ^ (bin[j] - '0');
+                bufferSize--;
+                if (bufferSize == 0) {
+                    compressedData.write(&chr, 1);
+                    chr = 0;
+                    bufferSize = 8;
+                }
             }
         }
     }
-
+    
     // Aggiungiamo l'eventuale byte residuo
     if (bufferSize) {
         chr = chr << bufferSize;
@@ -502,7 +545,7 @@ std::string huffmantool::compressString(const std::string &input)
 }
 
 //ChatGPT Helped in rewriting the compression just for a string - very good understanding of streams was the key
-std::string huffmantool::decompressString(const std::string &compressedInput)
+std::string huffmantool::decompressString(const std::string &compressedInput, bool sourceIsImage)
 {
     std::stringstream reader(compressedInput, std::ios::in | std::ios::binary);
     std::stringstream output;
@@ -522,20 +565,48 @@ std::string huffmantool::decompressString(const std::string &compressedInput)
     int readChars = 0;
     char ch;
 
-    while (reader.read(&ch, 1) && readChars < totalChars)
-    {
-        std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
-        for (unsigned int i = 0; i < bin_read.length(); i++)
+    if (sourceIsImage){
+        char prev = 0;
+        while (reader.read(&ch, 1) && readChars < totalChars)
         {
-            key += bin_read[i];
-            if (keyCharMap.count(key) > 0)
+            std::string bin_read =
+                std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
+
+            for (char bit : bin_read)
             {
-                char out = keyCharMap[key];
-                output.write(&out, 1);
-                key = "";
-                readChars++;
-                if (readChars == totalChars)
-                    break;
+                key += bit;
+                if (keyCharMap.count(key))
+                {
+                    char value = keyCharMap[key];
+                    char out = value + prev;
+                    prev = out;
+
+                    output.write(&out, 1);
+                    key.clear();
+                    readChars++;
+
+                    if (readChars == totalChars)
+                        break;
+                }
+            }
+        }
+    }else 
+    {
+        while (reader.read(&ch, 1) && readChars < totalChars)
+        {
+            std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
+            for (unsigned int i = 0; i < bin_read.length(); i++)
+            {
+                key += bin_read[i];
+                if (keyCharMap.count(key) > 0)
+                {
+                    char out = keyCharMap[key];
+                    output.write(&out, 1);
+                    key = "";
+                    readChars++;
+                    if (readChars == totalChars)
+                        break;
+                }
             }
         }
     }
@@ -548,7 +619,6 @@ std::string huffmantool::decompressString(const std::string &compressedInput)
 
     return output.str();
 }
-
 
 /**
  * @brief Benchmarks the performance of the tool. Returns time taken for each step and compression ratio achieved.
