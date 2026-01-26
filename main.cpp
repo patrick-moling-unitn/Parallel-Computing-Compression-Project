@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <string>
 
 // Huffman algorithm available on "https://github.com/bhumijgupta/huffman-compression-library"
@@ -27,13 +28,43 @@ int main(int argc, char** argv)
 	// Why doesn't this algorithm work with normal jpg/png/cr2? Short answer: those formats are already compressed (jpg/png) and/or ordered (cr2)
 	
 	huffmantool ht;
-	ht.compressFile(filename, "compressed.data");
-	ht.decompressFile("compressed.data", "decompressed_"+filename, filename);
 	
-	string originalData = "Hello World!";
-	string compressedData = ht.compressString(originalData);
-	cout << ht.decompressString(compressedData) << endl;
-	AnalizeCompressionRatio(originalData, compressedData);
+	/*
+	ht.compressFile(filename, "compressed.data");
+	ht.decompressFile("compressed.data", "decompressed_"+filename, filename);*/
+	
+	//--First we read the file
+    std::ifstream reader;
+	reader.open(filename, std::ios::in | std::ios::binary);
+    if (!reader.is_open())
+    {
+        std::cerr << "ERROR: No such file exists or cannot open file " + filename;
+        return 0;
+    } 
+	string line, fileContent = "";
+    while (getline(reader, line)) {
+    	fileContent += line + "\n";
+    }
+	
+	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
+	string compressedData = ht.compressString(fileContent);
+	
+	//--Then we write the compressed data
+    std::ofstream writer;
+    writer.open("compressed.data", std::ios::out | std::ios::binary | std::ios::trunc);
+    writer.write(compressedData.data(), compressedData.size());
+    writer.close();
+    
+    //*Also useful for MPI splitting
+	string decompressed = ht.decompressString(compressedData);
+	
+	//--Then we write the decompressed data
+    writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
+    writer.write(decompressed.data(), decompressed.size());
+    writer.close();
+	
+	//cout << ht.decompressString(compressedData) << endl;
+	AnalizeCompressionRatio(fileContent, compressedData);
 
 	//ht.benchmark("test.txt");
 }
