@@ -420,63 +420,94 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     std::vector<cfp *> freq_store;
     char ch;
     int numChars = 0;
-
-    // Creiamo uno stringstream per leggere la stringa
-    std::stringstream reader(input);
+    
+    //Data for the OpenMP
+    std::vector<cfp *> local_freq_store;
     
     // Passo 1: Creiamo la mappa delle frequenze
     if (sourceIsImage){
-        char prev = 0;
-        while (reader.read(&ch, 1))
+        char prev = 0, value;
+		#pragma omp parallel for private(value, prev, local_freq_store)
+        for	(int i=0; i < input.size(); i++)
         {
-            char value = ch - prev;
-            prev = ch;
+            value = input[i] - prev;
+            prev = input[i];
 
+			#pragma omp atomic
             numChars++;
             if (index->count(value) > 0) {
                 int ind = index->at(value);
-                freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
+                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
             } else {
-                index->insert({value, freq_store.size()});
-                freq_store.push_back(new cfp(value, 1));
+            	#pragma omp critical
+				{
+                	index->insert({value, local_freq_store.size()});
+				}
+                local_freq_store.push_back(new cfp(value, 1));
             }
         }
     }else
     { 
-        while (reader.read(&ch, 1)) {
+    	char value;
+		#pragma omp parallel for private(value, local_freq_store)
+        for	(int i=0; i < input.size(); i++)
+        {
+        	value = input[i];
+			#pragma omp atomic
             numChars++;
-            if (index->count(ch) > 0) {
-                int ind = index->at(ch);
-                freq_store[ind]->setFreq(freq_store[ind]->getFreq() + 1);
+            
+            if (index->count(value) > 0) {
+                int ind = index->at(value);
+                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
             } else {
-                index->insert({ch, freq_store.size()});
-                freq_store.push_back(new cfp(ch, 1));
+            	#pragma omp critical
+				{
+	                index->insert({value, local_freq_store.size()});
+				}
+                local_freq_store.push_back(new cfp(value, 1));
             }
         }
     }
-    delete index;
+    
+	delete index;
+	//Joining back local results 
+    for (auto i : local_freq_store) {
+        freq_store.push_back(i);
+    }
 
     if (freq_store.size() <= 1) {
         std::cout << "INFO: No need for encryption\n";
-        return "";  // Se c'è solo un carattere, non serve compressione
+        return "";  // Se c'� solo un carattere, non serve compressione
     }
 
-    // Creazione della coda di priorità per i nodi di Huffman
+    // Creazione della coda di priorit� per i nodi di Huffman
     std::priority_queue<cfp *, std::vector<cfp *>, pairComparator> freq_sorted;
+    
     for (auto i : freq_store) {
         freq_sorted.push(i);
     }
 
     cfp *head;
+	#pragma omp parallel
     while (!freq_sorted.empty()) {
         cfp *first = freq_sorted.top();
-        freq_sorted.pop();
+		#pragma omp critical
+		{
+	        freq_sorted.pop();
+		}
         cfp *second = freq_sorted.top();
+		#pragma omp critical
+		{
         freq_sorted.pop();
+		}
         cfp *newPair = new cfp('~', first->getFreq() + second->getFreq());
         newPair->left = first;
         newPair->right = second;
-        freq_sorted.push(newPair);
+        
+        #pragma omp critical
+		{
+        	freq_sorted.push(newPair);
+		}
         if (freq_sorted.size() == 1) {
             head = newPair;
             break;
@@ -501,10 +532,11 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     // Scriviamo la stringa compressa nel stringstream
     if (sourceIsImage){
         char prev = 0;
-        for (char ch : input)
+		#pragma omp parallel for private(prev, bufferSize, chr)
+        for (unsigned int i = 0; i < input.length(); i++)
         {
-            char value = ch - prev;
-            prev = ch;
+            char value = input[i] - prev;
+            prev = input[i];
 
             const std::string &bin = charKeyMap[value];
             for (char b : bin)
@@ -513,7 +545,10 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
                 bufferSize--;
                 if (bufferSize == 0)
                 {
-                    compressedData.write(&chr, 1);
+					#pragma omp critical
+					{
+                    	compressedData.write(&chr, 1);
+					}
                     chr = 0;
                     bufferSize = 8;
                 }
@@ -521,13 +556,17 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
         }
     }else
 	{
+		#pragma omp parallel for private(bufferSize, chr)
         for (unsigned int i = 0; i < input.length(); i++) {
             std::string bin = charKeyMap[input[i]];
             for (unsigned int j = 0; j < bin.length(); j++) {
                 chr = (chr << 1) ^ (bin[j] - '0');
                 bufferSize--;
                 if (bufferSize == 0) {
-                    compressedData.write(&chr, 1);
+					#pragma omp critical
+					{
+                    	compressedData.write(&chr, 1);
+					}
                     chr = 0;
                     bufferSize = 8;
                 }
@@ -565,8 +604,10 @@ std::string huffmantool::decompressString(const std::string &compressedInput, bo
     int readChars = 0;
     char ch;
 
+	// We can't parallelize this since Huffamn decoding works serial bit after bit
     if (sourceIsImage){
         char prev = 0;
+        
         while (reader.read(&ch, 1) && readChars < totalChars)
         {
             std::string bin_read =
@@ -595,6 +636,7 @@ std::string huffmantool::decompressString(const std::string &compressedInput, bo
         while (reader.read(&ch, 1) && readChars < totalChars)
         {
             std::string bin_read = std::bitset<8>(static_cast<unsigned char>(ch)).to_string();
+            
             for (unsigned int i = 0; i < bin_read.length(); i++)
             {
                 key += bin_read[i];
