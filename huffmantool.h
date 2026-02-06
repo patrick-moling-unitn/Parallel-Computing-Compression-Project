@@ -421,7 +421,7 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     char ch;
     int numChars = 0;
     
-    std::cout << "A";
+    //std::cout << "A";
     
     // Passo 1: Creiamo la mappa delle frequenze
     if (sourceIsImage){
@@ -431,7 +431,7 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		    std::vector<cfp*> local_freq_store;  
 	    	char prev = 0;
     
-			#pragma omp for private(prev, local_freq_store)
+			#pragma omp for
 	        for	(int i=0; i < input.length(); i++)
 	        {
 	            char value = input[i] - prev;
@@ -439,17 +439,34 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 	
 				#pragma omp atomic
 	            numChars++;
-	            if (index->count(value) > 0) {
-	                int ind = index->at(value);
+	            auto search = local_index.find(value);
+		        if (search != local_index.end()) {
+            		int ind = search->second;
 	                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
 	            } else {
-	            	#pragma omp critical
-					{
-	                	index->insert({value, local_freq_store.size()});
-					}
-	                local_freq_store.push_back(new cfp(value, 1));
+            		int pos = local_freq_store.size();
+		            local_freq_store.push_back(new cfp(value, 1));
+		            local_index.insert({value, pos});
 	            }
 	        }
+	        
+	        #pragma omp critical
+		    {
+		    	//Joining back local results
+		        for (auto& kv : local_index) {
+		            char value = kv.first;
+		            int pos = kv.second;
+		            if (index->count(value) > 0) {
+		                int global_pos = index->at(value);
+		                freq_store[global_pos]->setFreq(freq_store[global_pos]->getFreq() + local_freq_store[pos]->getFreq());
+		                delete local_freq_store[pos];
+		            } else {
+		                int global_pos = freq_store.size();
+		                index->insert({value, global_pos});
+		                freq_store.push_back(local_freq_store[pos]);
+		            }
+		        }
+		    }
     	}
     }else
     { 
@@ -458,10 +475,10 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		    std::unordered_map<char,int> local_index;
 		    std::vector<cfp*> local_freq_store;  
 		    
-    		#pragma omp single
+    		/*#pragma omp single
 	        {
     			std::cout << "B";
-    		}	
+    		}*/	
     
 			#pragma omp for
 	        for	(int i=0; i < input.length(); i++)
@@ -481,10 +498,10 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 	            }
 	        }
 	        
-    		#pragma omp single
+    		/*#pragma omp single
 	        {
     			std::cout << "C";
-    		}	
+    		}*/	
 	        
 	        #pragma omp critical
 		    {
@@ -506,8 +523,7 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		}
     }
     
-    std::cout << "D";
-    printf("\n\n\n");
+    //std::cout << "D";
 	    
 	delete index;
 
@@ -522,35 +538,27 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     for (auto i : freq_store) {
         freq_sorted.push(i);
     }
+    
+    //std::cout << "E";
 
     cfp *head;
-	#pragma omp parallel
-	{
-		while (!freq_sorted.empty()) {
-	        cfp *first = freq_sorted.top();
-			#pragma omp critical
-			{
-		        freq_sorted.pop();
-			}
-	        cfp *second = freq_sorted.top();
-			#pragma omp critical
-			{
-	        	freq_sorted.pop();
-			}
-	        cfp *newPair = new cfp('~', first->getFreq() + second->getFreq());
-	        newPair->left = first;
-	        newPair->right = second;
-	        
-	        #pragma omp critical
-			{
-	        	freq_sorted.push(newPair);
-			}
-	        if (freq_sorted.size() == 1) {
-	            head = newPair;
-	            break;
-	        }
-	    }
-	}
+	while (!freq_sorted.empty()) {
+        cfp *first = freq_sorted.top();
+	    freq_sorted.pop();
+        cfp *second = freq_sorted.top();
+        freq_sorted.pop();
+        cfp *newPair = new cfp('~', first->getFreq() + second->getFreq());
+        newPair->left = first;
+        newPair->right = second;
+        
+		freq_sorted.push(newPair);
+        if (freq_sorted.size() == 1) {
+            head = newPair;
+            break;
+        }
+    }
+	
+    //std::cout << "F";
 
     std::unordered_map<char, std::string> charKeyMap;
     traverse(head, charKeyMap, "");
@@ -564,59 +572,82 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     // Scriviamo il numero di caratteri
     compressedData.write(reinterpret_cast<char*>(&numChars), sizeof(numChars));
     
-    char chr = 0;
-    int bufferSize = 8;
+    //std::cout << "G";
 
     // Scriviamo la stringa compressa nel stringstream
     if (sourceIsImage){
-        char prev = 0;
-		#pragma omp parallel for private(prev, bufferSize, chr)
-        for (unsigned int i = 0; i < input.length(); i++)
-        {
-            char value = input[i] - prev;
-            prev = input[i];
-
-            const std::string &bin = charKeyMap[value];
-            for (unsigned int j = 0; j < bin.length(); j++)
-            {
-                chr = (chr << 1) | (bin[j] - '0');
-                bufferSize--;
-                if (bufferSize == 0)
-                {
-					#pragma omp critical
-					{
-                    	compressedData.write(&chr, 1);
-					}
-                    chr = 0;
-                    bufferSize = 8;
-                }
-            }
-        }
+		#pragma omp parallel
+		{
+		    char chr = 0; 
+		    int bufferSize = 8; 
+        	char prev = 0;
+    		std::stringstream threadBuffer;
+        	
+			#pragma omp for
+	        for (unsigned int i = 0; i < input.length(); i++)
+	        {
+	            char value = input[i] - prev;
+	            prev = input[i];
+	
+	            const std::string &bin = charKeyMap[value];
+	            for (unsigned int j = 0; j < bin.length(); j++)
+	            {
+	                chr = (chr << 1) | (bin[j] - '0');
+	                bufferSize--;
+	                if (bufferSize == 0)
+	                {
+	                    threadBuffer.write(&chr, 1);
+	                    chr = 0;
+	                    bufferSize = 8;
+	                }
+	            }
+	        }
+	        
+		    if (bufferSize) {
+		        chr = chr << bufferSize;
+				threadBuffer.write(&chr, 1);
+			}
+			
+			#pragma omp critical
+		    {
+		        compressedData << threadBuffer.str();
+		    }
+		}
     }else
 	{
-		#pragma omp parallel for private(bufferSize, chr)
-        for (unsigned int i = 0; i < input.length(); i++) {
-            std::string bin = charKeyMap[input[i]];
-            for (unsigned int j = 0; j < bin.length(); j++) {
-                chr = (chr << 1) ^ (bin[j] - '0');
-                bufferSize--;
-                if (bufferSize == 0) {
-					#pragma omp critical
-					{
-                    	compressedData.write(&chr, 1);
-					}
-                    chr = 0;
-                    bufferSize = 8;
-                }
-            }
-        }
+		#pragma omp parallel
+		{
+		    char chr = 0; 
+		    int bufferSize = 8; 
+    		std::stringstream threadBuffer;
+	    
+			#pragma omp for
+	        for (unsigned int i = 0; i < input.length(); i++) {
+	            std::string bin = charKeyMap[input[i]];
+	            for (unsigned int j = 0; j < bin.length(); j++) {
+	                chr = (chr << 1) ^ (bin[j] - '0');
+	                bufferSize--;
+	                if (bufferSize == 0) {
+	                    threadBuffer.write(&chr, 1);
+	                    chr = 0;
+	                    bufferSize = 8;
+	                }
+	            }
+	        }
+    
+		    if (bufferSize) {
+		        chr = chr << bufferSize;
+			    threadBuffer.write(&chr, 1);
+			}
+			
+			#pragma omp critical
+		    {
+		        compressedData << threadBuffer.str();
+		    }
+		}
     }
     
-    // Aggiungiamo l'eventuale byte residuo
-    if (bufferSize) {
-        chr = chr << bufferSize;
-        compressedData.write(&chr, 1);
-    }
+    //std::cout << "H";
 
     return compressedData.str();  // Restituiamo la stringa compressa
 }

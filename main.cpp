@@ -5,6 +5,8 @@
 // Huffman algorithm available on "https://github.com/bhumijgupta/huffman-compression-library"
 #include "huffmantool.h"
 
+#include <algorithm>  //std::sort
+
 //For OpenMP
 //>
 #ifdef _OPENMP
@@ -83,13 +85,24 @@ int main(int argc, char** argv)
     bool sourceIsImage = ht.isImageFile(filename);
 	
 	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
-	//auto start = std::chrono::high_resolution_clock::now();
-	string compressedData = ht.compressString(fileContent, sourceIsImage);
-	//auto end = chrono::high_resolution_clock::now();
-	//double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
-	//cout << time / 1000000 << "ms" << endl;
+	int n = 10;
+	double* times = new double[n];
+	string compressedData;
+	for (int i = 0; i < n; i++){
+		auto start = std::chrono::high_resolution_clock::now();
+		compressedData = ht.compressString(fileContent, sourceIsImage);
+		auto end = chrono::high_resolution_clock::now();
+		double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
+		times[i] = time;
+	}
 	
-	cout << "data size: " << compressedData.size() << endl;
+    std::sort(times, times + 10);
+    int percentile_index = 0.9 * (n - 1);  // 90* percentile
+    double percentile_value = times[percentile_index];
+	
+	cout << "Executed for [90* percentile]: " << percentile_value / 1000000 << "ms" << endl;
+	
+	cout << "Data size: " << compressedData.size() << endl;
 	
 	//--Then we write the compressed data
     std::ofstream writer;
