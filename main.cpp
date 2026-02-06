@@ -83,11 +83,13 @@ int main(int argc, char** argv)
     bool sourceIsImage = ht.isImageFile(filename);
 	
 	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
-	auto start = std::chrono::high_resolution_clock::now();
+	//auto start = std::chrono::high_resolution_clock::now();
 	string compressedData = ht.compressString(fileContent, sourceIsImage);
-	auto end = chrono::high_resolution_clock::now();
-	double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
-	cout << time / 1000000 << "ms" << endl;
+	//auto end = chrono::high_resolution_clock::now();
+	//double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
+	//cout << time / 1000000 << "ms" << endl;
+	
+	cout << "data size: " << compressedData.size() << endl;
 	
 	//--Then we write the compressed data
     std::ofstream writer;

@@ -421,66 +421,102 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     char ch;
     int numChars = 0;
     
-    //Data for the OpenMP
-    std::vector<cfp *> local_freq_store;
+    std::cout << "A";
     
     // Passo 1: Creiamo la mappa delle frequenze
     if (sourceIsImage){
-        char prev = 0, value;
-		#pragma omp parallel for private(value, prev, local_freq_store)
-        for	(int i=0; i < input.size(); i++)
-        {
-            value = input[i] - prev;
-            prev = input[i];
-
-			#pragma omp atomic
-            numChars++;
-            if (index->count(value) > 0) {
-                int ind = index->at(value);
-                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
-            } else {
-            	#pragma omp critical
-				{
-                	index->insert({value, local_freq_store.size()});
-				}
-                local_freq_store.push_back(new cfp(value, 1));
-            }
-        }
+		#pragma omp parallel
+		{
+		    std::unordered_map<char,int> local_index;
+		    std::vector<cfp*> local_freq_store;  
+	    	char prev = 0;
+    
+			#pragma omp for private(prev, local_freq_store)
+	        for	(int i=0; i < input.length(); i++)
+	        {
+	            char value = input[i] - prev;
+	            prev = input[i];
+	
+				#pragma omp atomic
+	            numChars++;
+	            if (index->count(value) > 0) {
+	                int ind = index->at(value);
+	                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
+	            } else {
+	            	#pragma omp critical
+					{
+	                	index->insert({value, local_freq_store.size()});
+					}
+	                local_freq_store.push_back(new cfp(value, 1));
+	            }
+	        }
+    	}
     }else
     { 
-    	char value;
-		#pragma omp parallel for private(value, local_freq_store)
-        for	(int i=0; i < input.size(); i++)
-        {
-        	value = input[i];
-			#pragma omp atomic
-            numChars++;
-            
-            if (index->count(value) > 0) {
-                int ind = index->at(value);
-                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
-            } else {
-            	#pragma omp critical
-				{
-	                index->insert({value, local_freq_store.size()});
-				}
-                local_freq_store.push_back(new cfp(value, 1));
-            }
-        }
+		#pragma omp parallel
+		{
+		    std::unordered_map<char,int> local_index;
+		    std::vector<cfp*> local_freq_store;  
+		    
+    		#pragma omp single
+	        {
+    			std::cout << "B";
+    		}	
+    
+			#pragma omp for
+	        for	(int i=0; i < input.length(); i++)
+	        {
+	        	char value = input[i];
+				#pragma omp atomic
+	            numChars++;
+	            
+		        auto search = local_index.find(value);
+		        if (search != local_index.end()) {
+            		int ind = search->second;
+	                local_freq_store[ind]->setFreq(local_freq_store[ind]->getFreq() + 1);
+	            } else {
+            		int pos = local_freq_store.size();
+		            local_freq_store.push_back(new cfp(value, 1));
+		            local_index.insert({value, pos});
+	            }
+	        }
+	        
+    		#pragma omp single
+	        {
+    			std::cout << "C";
+    		}	
+	        
+	        #pragma omp critical
+		    {
+		    	//Joining back local results
+		        for (auto& kv : local_index) {
+		            char value = kv.first;
+		            int pos = kv.second;
+		            if (index->count(value) > 0) {
+		                int global_pos = index->at(value);
+		                freq_store[global_pos]->setFreq(freq_store[global_pos]->getFreq() + local_freq_store[pos]->getFreq());
+		                delete local_freq_store[pos];
+		            } else {
+		                int global_pos = freq_store.size();
+		                index->insert({value, global_pos});
+		                freq_store.push_back(local_freq_store[pos]);
+		            }
+		        }
+		    }
+		}
     }
     
+    std::cout << "D";
+    printf("\n\n\n");
+	    
 	delete index;
-	//Joining back local results 
-    for (auto i : local_freq_store) {
-        freq_store.push_back(i);
-    }
 
     if (freq_store.size() <= 1) {
         std::cout << "INFO: No need for encryption\n";
-        return "";  // Se c'� solo un carattere, non serve compressione
+        return "";  // Se c'e' solo un carattere, non serve compressione
     }
 
-    // Creazione della coda di priorit� per i nodi di Huffman
+    // Creazione della coda di priorita' per i nodi di Huffman
     std::priority_queue<cfp *, std::vector<cfp *>, pairComparator> freq_sorted;
     
     for (auto i : freq_store) {
@@ -489,30 +525,32 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 
     cfp *head;
 	#pragma omp parallel
-    while (!freq_sorted.empty()) {
-        cfp *first = freq_sorted.top();
-		#pragma omp critical
-		{
-	        freq_sorted.pop();
-		}
-        cfp *second = freq_sorted.top();
-		#pragma omp critical
-		{
-        freq_sorted.pop();
-		}
-        cfp *newPair = new cfp('~', first->getFreq() + second->getFreq());
-        newPair->left = first;
-        newPair->right = second;
-        
-        #pragma omp critical
-		{
-        	freq_sorted.push(newPair);
-		}
-        if (freq_sorted.size() == 1) {
-            head = newPair;
-            break;
-        }
-    }
+	{
+		while (!freq_sorted.empty()) {
+	        cfp *first = freq_sorted.top();
+			#pragma omp critical
+			{
+		        freq_sorted.pop();
+			}
+	        cfp *second = freq_sorted.top();
+			#pragma omp critical
+			{
+	        	freq_sorted.pop();
+			}
+	        cfp *newPair = new cfp('~', first->getFreq() + second->getFreq());
+	        newPair->left = first;
+	        newPair->right = second;
+	        
+	        #pragma omp critical
+			{
+	        	freq_sorted.push(newPair);
+			}
+	        if (freq_sorted.size() == 1) {
+	            head = newPair;
+	            break;
+	        }
+	    }
+	}
 
     std::unordered_map<char, std::string> charKeyMap;
     traverse(head, charKeyMap, "");
@@ -539,9 +577,9 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
             prev = input[i];
 
             const std::string &bin = charKeyMap[value];
-            for (char b : bin)
+            for (unsigned int j = 0; j < bin.length(); j++)
             {
-                chr = (chr << 1) | (b - '0');
+                chr = (chr << 1) | (bin[j] - '0');
                 bufferSize--;
                 if (bufferSize == 0)
                 {
