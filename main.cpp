@@ -2,6 +2,8 @@
 #include <fstream>
 #include <string>
 
+//Citation: https://www.researchgate.net/publication/371729160_Parallel_Data_Compression_Techniques
+
 // Huffman algorithm available on "https://github.com/bhumijgupta/huffman-compression-library"
 #include "huffmantool.h"
 
@@ -15,6 +17,8 @@
 //<
 
 using namespace std;
+
+#define EXECUTION_TIMES 10
 
 void AnalizeCompressionRatio(string original, string compressed, string decompressed){
 	float originalSize = sizeof(original) * original.size(), compressedSize = sizeof(compressed) * compressed.size();
@@ -87,10 +91,10 @@ int main(int argc, char** argv)
     bool sourceIsImage = ht.isImageFile(filename);
 	
 	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
-	int n = 10;
-	double* times = new double[n];
+	
+	double* times = new double[EXECUTION_TIMES];
 	string compressedData;
-	for (int i = 0; i < n; i++){
+	for (int i = 0; i < EXECUTION_TIMES; i++){
 		auto start = std::chrono::high_resolution_clock::now();
 		compressedData = ht.compressString(fileContent, sourceIsImage);
 		auto end = chrono::high_resolution_clock::now();
@@ -98,13 +102,9 @@ int main(int argc, char** argv)
 		times[i] = time;
 	}
 	
-    std::sort(times, times + 10);
-    int percentile_index = 0.9 * (n - 1);  // 90* percentile
-    double percentile_value = times[percentile_index];
-	
-	cout << "Executed compression for [90* percentile]: " << percentile_value / 1000000 << "ms" << endl;
-	
-	cout << "Data size: " << compressedData.size() << endl;
+    std::sort(times, times + EXECUTION_TIMES);
+    int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1);  // 90* percentile
+    double compression_percentile_value = times[compression_percentile_index];
 	
 	//--Then we write the compressed data
     std::ofstream writer;
@@ -114,7 +114,7 @@ int main(int argc, char** argv)
     
     //*Also useful for MPI splitting
 	string decompressed;
-    for (int i = 0; i < n; i++){
+    for (int i = 0; i < EXECUTION_TIMES; i++){
 		auto start = std::chrono::high_resolution_clock::now();
 		decompressed = ht.decompressString(compressedData, sourceIsImage);
 		auto end = chrono::high_resolution_clock::now();
@@ -122,11 +122,13 @@ int main(int argc, char** argv)
 		times[i] = time;
 	}
 	
-    std::sort(times, times + 10);
-    percentile_index = 0.9 * (n - 1);  // 90* percentile
-    percentile_value = times[percentile_index];
+    std::sort(times, times + EXECUTION_TIMES);
+    int decompression_percentile_index = 0.9 * (EXECUTION_TIMES - 1);  // 90* percentile
+    double decompression_percentile_value = times[decompression_percentile_index];
 	
-	cout << "Executed decompression for [90* percentile]: " << percentile_value / 1000000 << "ms" << endl;
+	cout << "Executed compression for [90* percentile]: " << compression_percentile_value / 1000000 << "ms" << endl;
+	
+	cout << "Executed decompression for [90* percentile]: " << decompression_percentile_value / 1000000 << "ms" << endl;
 	
 	//--Then we write the decompressed data
     writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
