@@ -16,10 +16,12 @@
 
 using namespace std;
 
-void AnalizeCompressionRatio(string original, string compressed){
+void AnalizeCompressionRatio(string original, string compressed, string decompressed){
 	float originalSize = sizeof(original) * original.size(), compressedSize = sizeof(compressed) * compressed.size();
 	float compressionRatio = (1 - compressedSize / originalSize) * 100;
 	cout << "--------------------------------" << endl;
+	string dataStatus = original == decompressed ? "working as expected! [Success]" : "corrupting the original data! [Error]";
+	cout << "Data decompression is " << dataStatus << endl;
 	cout << "Original size is: " << originalSize << " bytes" << endl;
 	cout << "Compressed size is: " << compressedSize << " bytes" << endl;
 	cout << "Compression ratio is: " << compressionRatio << "%";
@@ -100,7 +102,7 @@ int main(int argc, char** argv)
     int percentile_index = 0.9 * (n - 1);  // 90* percentile
     double percentile_value = times[percentile_index];
 	
-	cout << "Executed for [90* percentile]: " << percentile_value / 1000000 << "ms" << endl;
+	cout << "Executed compression for [90* percentile]: " << percentile_value / 1000000 << "ms" << endl;
 	
 	cout << "Data size: " << compressedData.size() << endl;
 	
@@ -111,7 +113,20 @@ int main(int argc, char** argv)
     writer.close();
     
     //*Also useful for MPI splitting
-	string decompressed = ht.decompressString(compressedData, sourceIsImage);
+	string decompressed;
+    for (int i = 0; i < n; i++){
+		auto start = std::chrono::high_resolution_clock::now();
+		decompressed = ht.decompressString(compressedData, sourceIsImage);
+		auto end = chrono::high_resolution_clock::now();
+		double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
+		times[i] = time;
+	}
+	
+    std::sort(times, times + 10);
+    percentile_index = 0.9 * (n - 1);  // 90* percentile
+    percentile_value = times[percentile_index];
+	
+	cout << "Executed decompression for [90* percentile]: " << percentile_value / 1000000 << "ms" << endl;
 	
 	//--Then we write the decompressed data
     writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
@@ -119,7 +134,7 @@ int main(int argc, char** argv)
     writer.close();
 	
 	//cout << ht.decompressString(compressedData) << endl;
-	AnalizeCompressionRatio(fileContent, compressedData);
+	AnalizeCompressionRatio(fileContent, compressedData, decompressed);
 
 	//ht.benchmark("test.txt");
 }

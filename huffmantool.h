@@ -418,7 +418,6 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     // Mappa per l'indice nel vettore
     std::unordered_map<char, int> *index = new std::unordered_map<char, int>;
     std::vector<cfp *> freq_store;
-    char ch;
     int numChars = 0;
     
     //std::cout << "A";
@@ -574,76 +573,58 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
     
     //std::cout << "G";
 
-    // Scriviamo la stringa compressa nel stringstream
-    if (sourceIsImage){
-		#pragma omp parallel
-		{
-		    char chr = 0; 
-		    int bufferSize = 8; 
-        	char prev = 0;
-    		std::stringstream threadBuffer;
-        	
-			#pragma omp for
-	        for (unsigned int i = 0; i < input.length(); i++)
-	        {
-	            char value = input[i] - prev;
-	            prev = input[i];
+	char chr = 0; 
+	int bufferSize = 8; 
 	
-	            const std::string &bin = charKeyMap[value];
-	            for (unsigned int j = 0; j < bin.length(); j++)
-	            {
-	                chr = (chr << 1) | (bin[j] - '0');
-	                bufferSize--;
-	                if (bufferSize == 0)
-	                {
-	                    threadBuffer.write(&chr, 1);
-	                    chr = 0;
-	                    bufferSize = 8;
-	                }
-	            }
-	        }
-	        
-		    if (bufferSize) {
-		        chr = chr << bufferSize;
-				threadBuffer.write(&chr, 1);
-			}
-			
-			#pragma omp critical
-		    {
-		        compressedData << threadBuffer.str();
-		    }
+    // Scriviamo la stringa compressa nel stringstream
+    // THIS PART CAN'T BE PARALLELIZED!
+    if (sourceIsImage){
+        char prev = 0;
+        
+        for (unsigned int i = 0; i < input.length(); i++)
+        {
+            char value = input[i] - prev;
+            prev = input[i];
+
+            const std::string &bin = charKeyMap[value];
+            for (unsigned int j = 0; j < bin.length(); j++)
+        {
+                chr = (chr << 1) | (bin[j] - '0');
+                bufferSize--;
+                
+                if (bufferSize == 0)
+                {
+                    compressedData.write(&chr, 1);
+                    chr = 0;
+                    bufferSize = 8;
+                }
+            }
+        }
+        
+	    if (bufferSize) {
+	        chr = chr << bufferSize;
+			compressedData.write(&chr, 1);
 		}
     }else
 	{
-		#pragma omp parallel
-		{
-		    char chr = 0; 
-		    int bufferSize = 8; 
-    		std::stringstream threadBuffer;
-	    
-			#pragma omp for
-	        for (unsigned int i = 0; i < input.length(); i++) {
-	            std::string bin = charKeyMap[input[i]];
-	            for (unsigned int j = 0; j < bin.length(); j++) {
-	                chr = (chr << 1) ^ (bin[j] - '0');
-	                bufferSize--;
-	                if (bufferSize == 0) {
-	                    threadBuffer.write(&chr, 1);
-	                    chr = 0;
-	                    bufferSize = 8;
-	                }
-	            }
-	        }
-    
-		    if (bufferSize) {
-		        chr = chr << bufferSize;
-			    threadBuffer.write(&chr, 1);
-			}
-			
-			#pragma omp critical
-		    {
-		        compressedData << threadBuffer.str();
-		    }
+        for (unsigned int i = 0; i < input.length(); i++) {
+            std::string bin = charKeyMap[input[i]];
+            
+        	for (unsigned int j = 0; j < bin.length(); j++) {
+                chr = (chr << 1) | (bin[j] - '0');
+                bufferSize--;
+                
+                if (bufferSize == 0) {
+                    compressedData.write(&chr, 1);
+                    chr = 0;
+                    bufferSize = 8;
+                }
+            }
+        }
+
+	    if (bufferSize) {
+	        chr = chr << bufferSize;
+		    compressedData.write(&chr, 1);
 		}
     }
     
