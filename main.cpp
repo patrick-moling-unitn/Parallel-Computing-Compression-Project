@@ -130,14 +130,42 @@ int main(int argc, char** argv)
 	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
 	double* times = (my_rank == 0) ? new double[EXECUTION_TIMES] : 0;
 	
+	int totalSize = fileContent.size();
+	int chunkSize = totalSize / comm_size;
+	int disparity = totalSize % comm_size;
+	
+	std::vector<int> rank_data_counts(comm_size), rank_offsets(comm_size), compressed_sizes(comm_size);
+	int offset = 0;
+	
+	for (int i = 0; i < comm_size; i++) {
+	    rank_data_counts[i] = chunkSize + (i < disparity ? 1 : 0);  
+	    rank_offsets[i] = offset;
+	    offset += rank_data_counts[i];
+	}
+	
+	int localSize = rank_data_counts[my_rank]; 
+	std::vector<char> localChunk(localSize); 
+	
 	//--We run for [EXECUTION_TIMES] times the compression algorithm
-	string compressedData;
+	string compressedData = "";
 	for (int i = 0; i < EXECUTION_TIMES; i++){
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		
 		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
 		
-		compressedData = ht.compressString(fileContent, sourceIsImage); // > We need to scatter this!!! <
+		MPI_Scatterv(fileContent.data(), rank_data_counts.data(), rank_offsets.data(), MPI_CHAR, localChunk.data(), localSize, MPI_CHAR, 0, MPI_COMM_WORLD);
+		
+		std::string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage);
+		
+		MPI_Gather(&localCompressed.size(), 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+	    if (my_rank == 0) {
+	        int totalSizeCompressed = std::accumulate(compressed_sizes.begin(), compressed_sizes.end(), 0);
+	        compressedData.resize(totalSizeCompressed);
+	    }
+		
+		MPI_Gatherv(localCompressed.data(), localCompressed.size(), MPI_CHAR, compressedData.data(), 
+			rank_data_counts.data(), rank_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
 		
 		if (my_rank == 0) 
 		{
@@ -164,18 +192,21 @@ int main(int argc, char** argv)
 	}
     
 	//--We run for [EXECUTION_TIMES] times the decompression algorithm
-	string decompressed;
-    for (int i = 0; i < EXECUTION_TIMES; i++){
-		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
-		
-		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
-		
-		decompressed = ht.decompressString(compressedData, sourceIsImage); // > We need to scatter this!!! <
-		
-		if (my_rank == 0) 
-		{
-			endTime = chrono::high_resolution_clock::now();
-			times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
+	string decompressed = "";
+	if (rank == 0) // < AT THE MOMENT WE ARE JUST TESTING COMPRESSION, DECOMPRESSION WILL BE DONE ONLY BY RANK 0!!!
+	{
+	    for (int i = 0; i < EXECUTION_TIMES; i++){
+			MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+			
+			if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
+			
+			decompressed = ht.decompressString(compressedData, sourceIsImage); // > We need to scatter this!!! <
+			
+			if (my_rank == 0) 
+			{
+				endTime = chrono::high_resolution_clock::now();
+				times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
+			}
 		}
 	}
 	
