@@ -90,16 +90,17 @@ int main(int argc, char** argv)
     }
     bool sourceIsImage = ht.isImageFile(filename);
 	
+	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
+	
 	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
 	
 	double* times = new double[EXECUTION_TIMES];
 	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
-		auto start = std::chrono::high_resolution_clock::now();
+		startTime = std::chrono::high_resolution_clock::now();
 		compressedData = ht.compressString(fileContent, sourceIsImage);
-		auto end = chrono::high_resolution_clock::now();
-		double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
-		times[i] = time;
+		endTime = chrono::high_resolution_clock::now();
+		times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 	}
 	
     std::sort(times, times + EXECUTION_TIMES);
@@ -115,16 +116,17 @@ int main(int argc, char** argv)
     //*Also useful for MPI splitting
 	string decompressed;
     for (int i = 0; i < EXECUTION_TIMES; i++){
-		auto start = std::chrono::high_resolution_clock::now();
+		startTime = std::chrono::high_resolution_clock::now();
 		decompressed = ht.decompressString(compressedData, sourceIsImage);
-		auto end = chrono::high_resolution_clock::now();
-		double time = chrono::duration_cast<chrono::nanoseconds>(end - start).count();
-		times[i] = time;
+		endTime = chrono::high_resolution_clock::now();
+		times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 	}
 	
     std::sort(times, times + EXECUTION_TIMES);
     int decompression_percentile_index = 0.9 * (EXECUTION_TIMES - 1);  // 90* percentile
     double decompression_percentile_value = times[decompression_percentile_index];
+	
+	delete[] times;
 	
 	cout << "Executed compression for [90* percentile]: " << compression_percentile_value / 1000000 << "ms" << endl;
 	

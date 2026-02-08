@@ -15,6 +15,7 @@
 *.raw
 *.CR2
 *.data
+*.mp3
 
 # Ignore all possible logs
 *.log
