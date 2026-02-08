@@ -99,7 +99,7 @@ int main(int argc, char** argv)
 	
 	huffmantool ht;
 	string fileContent = "";
-	bool sourceIsImage = false, fatalError = false;
+	int sourceIsImage = 0, fatalError = 0;
 	
 	if (my_rank == 0) 
 	{
@@ -130,54 +130,73 @@ int main(int argc, char** argv)
 	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
 	double* times = (my_rank == 0) ? new double[EXECUTION_TIMES] : 0;
 	
-	int totalSize = fileContent.size();
-	int chunkSize = totalSize / comm_size;
-	int disparity = totalSize % comm_size;
+	vector<int> rank_chunk_sizes(comm_size), rank_chunk_offsets(comm_size), compressed_sizes(comm_size), compressed_offsets(comm_size);
 	
-	std::vector<int> rank_data_counts(comm_size), rank_offsets(comm_size), compressed_sizes(comm_size);
-	int offset = 0;
-	
-	for (int i = 0; i < comm_size; i++) {
-	    rank_data_counts[i] = chunkSize + (i < disparity ? 1 : 0);  
-	    rank_offsets[i] = offset;
-	    offset += rank_data_counts[i];
+	//--We calculate the chunks to scatter
+	if (my_rank == 0)
+	{
+		int totalSize = fileContent.size();
+		int chunkSize = totalSize / comm_size;
+		int disparity = totalSize % comm_size;
+		
+		int offset = 0;
+		
+		for (int i = 0; i < comm_size; i++) {
+		    rank_chunk_sizes[i] = chunkSize + (i < disparity ? 1 : 0);  
+		    rank_chunk_offsets[i] = offset;
+		    offset += rank_chunk_sizes[i];
+		}
 	}
 	
-	int localSize = rank_data_counts[my_rank]; 
-	std::vector<char> localChunk(localSize); 
+	//--We share just the chunk size to 
+	MPI_Bcast(rank_chunk_sizes.data(), comm_size, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	int localSize = rank_chunk_sizes[my_rank]; 
+	vector<char> localChunk(localSize, 0);
 	
 	//--We run for [EXECUTION_TIMES] times the compression algorithm
-	std::vector<char> compressed_buffer(comm_size);
+	vector<char> compressed_buffer;
 	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
+		if (my_rank == 0) {
+			cout << "totalSize: " << fileContent.size() << endl;
+			for (int i = 0; i < comm_size; i++) 
+				cout << rank_chunk_sizes[i] << "\t" << rank_chunk_offsets[i] << "\t" << endl;
+		}
+		
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		
 		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
 		
-		MPI_Scatterv(fileContent.data(), rank_data_counts.data(), rank_offsets.data(), MPI_CHAR, localChunk.data(), localSize, MPI_CHAR, 0, MPI_COMM_WORLD);
+		MPI_Scatterv(fileContent.data(), rank_chunk_sizes.data(), rank_chunk_offsets.data(), MPI_CHAR, 
+					 localChunk.data(), localSize, MPI_CHAR, 0, MPI_COMM_WORLD);
 		
-		std::string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage);
+		cout << "Starting size of rank " << my_rank << ": " << localChunk.size() << endl;
 		
-		int local_size = localCompressed.size();
-		MPI_Gather(&local_size, 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage);
 		
-		cout << "Local size of rank " << my_rank << ": " << local_size << endl;
+		int local_compressed_size = localCompressed.size();
+		MPI_Gather(&local_compressed_size, 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		
+		cout << "Compressed size of rank " << my_rank << ": " << local_compressed_size << " compressedData: " << localCompressed << endl;
 
 	    if (my_rank == 0) {
 	        int offset = 0;
 		    for (int i = 0; i < comm_size; i++) {
-		        rank_offsets[i] = offset;
+				cout << "Offset " << i << ": " << offset << endl;
+		        compressed_offsets[i] = offset;
 		        offset += compressed_sizes[i];
 		    }
-		    compressedData.resize(offset);
+		    compressed_buffer.resize(offset, 0);
 	    
 			cout << "Final calculated size: " << offset << endl;
 	    }
 	    
-	    MPI_Abort(MPI_COMM_WORLD, 1);
+		//MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+	    //MPI_Abort(MPI_COMM_WORLD, 1);
 	    
-		MPI_Gatherv(localCompressed.data(), local_size, MPI_CHAR, compressed_buffer.data(), 
-			compressed_sizes.data(), rank_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
+		MPI_Gatherv(localCompressed.data(), local_compressed_size, MPI_CHAR, 
+			compressed_buffer.data(), compressed_sizes.data(), compressed_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
 		
 		if (my_rank == 0)
 		    compressedData = std::string(compressed_buffer.begin(), compressed_buffer.end());
@@ -187,6 +206,11 @@ int main(int argc, char** argv)
 			endTime = chrono::high_resolution_clock::now();
 			times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 		}
+		
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+		if (my_rank == 0) 
+			cout << ">>> Iteration done, compressed data:" << compressedData << endl;
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 	}
 	
 	double compression_percentile_value;
@@ -208,17 +232,24 @@ int main(int argc, char** argv)
 	    writer.write(compressedData.data(), compressedData.size());
 	    writer.close();
 	}
+	
+	if (my_rank == 0)
+	{
+		cout << "Executed compression for [90* percentile]: " << compression_percentile_value / 1000000 << "ms" << endl;
+	}
     
 	//--We run for [EXECUTION_TIMES] times the decompression algorithm
 	string decompressed = "";
 	if (my_rank == 0) // < AT THE MOMENT WE ARE JUST TESTING COMPRESSION, DECOMPRESSION WILL BE DONE ONLY BY RANK 0!!!
 	{
 	    for (int i = 0; i < EXECUTION_TIMES; i++){
-			MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+			//MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 			
 			if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
 			
 			decompressed = ht.decompressString(compressedData, sourceIsImage); // > We need to scatter this!!! <
+			
+			cout << "Decompressed: " << decompressed << endl;
 			
 			if (my_rank == 0) 
 			{
@@ -252,5 +283,6 @@ int main(int argc, char** argv)
 	
 	if (my_rank == 0) AnalizeCompressionRatio(fileContent, compressedData, decompressed);
 	
+	MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 	MPI_Finalize();
 }
