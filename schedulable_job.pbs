@@ -1,0 +1,21 @@
+#!/bin/bash
+# Job name
+#PBS -N compression_project_MOLING_PATRICK
+# Output files
+#PBS -o ./execution.out
+# Error files
+#PBS -e ./execution.err
+# Queue name
+#PBS -q short_cpuQ
+# Set the maximum wall time
+#PBS -l walltime=0:02:00
+# MPI job, 1 node, 4 processors and 1 mb memory per node
+#PBS -l select=1:ncpus=4:mpiprocs=4:mem=1mb
+# Modules
+module load gcc91
+module load mpich-3.2
+# Select the working directory
+cd /home/patrick.moling/Compression-Project/
+# Run program
+export OMP_NUM_THREADS=4
+mpiexec -n=4 ./main hello_world.txt 4

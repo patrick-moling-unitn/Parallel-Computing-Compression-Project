@@ -120,11 +120,11 @@ int main(int argc, char** argv)
 		}
 	}
 	
-	MPI_Bcast(&fatalError, 1, MPI_BOOL, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&fatalError, 1, MPI_INT, 0, MPI_COMM_WORLD);
 	if (fatalError) MPI_Abort(MPI_COMM_WORLD, 1);
 	
 	//--We broadcast wether the source file is an image or not 
-	MPI_Bcast(&sourceIsImage, 1, MPI_BOOL, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&sourceIsImage, 1, MPI_INT, 0, MPI_COMM_WORLD);
 	
 	//--We allocate the variables for calculating the latency
 	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
@@ -147,7 +147,8 @@ int main(int argc, char** argv)
 	std::vector<char> localChunk(localSize); 
 	
 	//--We run for [EXECUTION_TIMES] times the compression algorithm
-	string compressedData = "";
+	std::vector<char> compressed_buffer(comm_size);
+	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		
@@ -157,15 +158,29 @@ int main(int argc, char** argv)
 		
 		std::string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage);
 		
-		MPI_Gather(&localCompressed.size(), 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		int local_size = localCompressed.size();
+		MPI_Gather(&local_size, 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		
+		cout << "Local size of rank " << my_rank << ": " << local_size << endl;
 
 	    if (my_rank == 0) {
-	        int totalSizeCompressed = std::accumulate(compressed_sizes.begin(), compressed_sizes.end(), 0);
-	        compressedData.resize(totalSizeCompressed);
+	        int offset = 0;
+		    for (int i = 0; i < comm_size; i++) {
+		        rank_offsets[i] = offset;
+		        offset += compressed_sizes[i];
+		    }
+		    compressedData.resize(offset);
+	    
+			cout << "Final calculated size: " << offset << endl;
 	    }
+	    
+	    MPI_Abort(MPI_COMM_WORLD, 1);
+	    
+		MPI_Gatherv(localCompressed.data(), local_size, MPI_CHAR, compressed_buffer.data(), 
+			compressed_sizes.data(), rank_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
 		
-		MPI_Gatherv(localCompressed.data(), localCompressed.size(), MPI_CHAR, compressedData.data(), 
-			rank_data_counts.data(), rank_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
+		if (my_rank == 0)
+		    compressedData = std::string(compressed_buffer.begin(), compressed_buffer.end());
 		
 		if (my_rank == 0) 
 		{
@@ -174,18 +189,21 @@ int main(int argc, char** argv)
 		}
 	}
 	
+	double compression_percentile_value;
+	
 	if (my_rank == 0) 
 	{
 		//--We get the 90* percentile of the runs
 	    std::sort(times, times + EXECUTION_TIMES);
 	    int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
-	    double compression_percentile_value = times[compression_percentile_index];
+	    compression_percentile_value = times[compression_percentile_index];
 	}
+	
+	std::ofstream writer;
 	
 	if (my_rank == 0 && writeResultFiles) 
 	{
 		//--We write the compressed data
-	    std::ofstream writer;
 	    writer.open("compressed_"+filename.substr(0, filename.find_last_of("."))+".data", std::ios::out | std::ios::binary | std::ios::trunc);
 	    writer.write(compressedData.data(), compressedData.size());
 	    writer.close();
@@ -193,7 +211,7 @@ int main(int argc, char** argv)
     
 	//--We run for [EXECUTION_TIMES] times the decompression algorithm
 	string decompressed = "";
-	if (rank == 0) // < AT THE MOMENT WE ARE JUST TESTING COMPRESSION, DECOMPRESSION WILL BE DONE ONLY BY RANK 0!!!
+	if (my_rank == 0) // < AT THE MOMENT WE ARE JUST TESTING COMPRESSION, DECOMPRESSION WILL BE DONE ONLY BY RANK 0!!!
 	{
 	    for (int i = 0; i < EXECUTION_TIMES; i++){
 			MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
