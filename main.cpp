@@ -50,7 +50,7 @@ int main(int argc, char** argv)
 	MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
 	
 	bool testing = false, openMPlog = true, writeResultFiles = true;
-	const int numberOfThreads;
+	int numberOfThreads;
 	string filename = "";
 	
 	if (my_rank == 0) 
@@ -99,7 +99,7 @@ int main(int argc, char** argv)
 	
 	huffmantool ht;
 	string fileContent = "";
-	bool sourceIsImage, fatalError;
+	bool sourceIsImage = false, fatalError = false;
 	
 	if (my_rank == 0) 
 	{
@@ -128,23 +128,33 @@ int main(int argc, char** argv)
 	
 	//--We allocate the variables for calculating the latency
 	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
-	double* times = new double[EXECUTION_TIMES];
+	double* times = (my_rank == 0) ? new double[EXECUTION_TIMES] : 0;
 	
 	//--We run for [EXECUTION_TIMES] times the compression algorithm
 	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
-		startTime = std::chrono::high_resolution_clock::now();
-		compressedData = ht.compressString(fileContent, sourceIsImage);
-		endTime = chrono::high_resolution_clock::now();
-		times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+		
+		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
+		
+		compressedData = ht.compressString(fileContent, sourceIsImage); // > We need to scatter this!!! <
+		
+		if (my_rank == 0) 
+		{
+			endTime = chrono::high_resolution_clock::now();
+			times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
+		}
 	}
 	
-	//--We get the 90* percentile of the runs
-    std::sort(times, times + EXECUTION_TIMES);
-    int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
-    double compression_percentile_value = times[compression_percentile_index];
+	if (my_rank == 0) 
+	{
+		//--We get the 90* percentile of the runs
+	    std::sort(times, times + EXECUTION_TIMES);
+	    int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
+	    double compression_percentile_value = times[compression_percentile_index];
+	}
 	
-	if (writeResultFiles) 
+	if (my_rank == 0 && writeResultFiles) 
 	{
 		//--We write the compressed data
 	    std::ofstream writer;
@@ -156,24 +166,34 @@ int main(int argc, char** argv)
 	//--We run for [EXECUTION_TIMES] times the decompression algorithm
 	string decompressed;
     for (int i = 0; i < EXECUTION_TIMES; i++){
-		startTime = std::chrono::high_resolution_clock::now();
-		decompressed = ht.decompressString(compressedData, sourceIsImage);
-		endTime = chrono::high_resolution_clock::now();
-		times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+		
+		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
+		
+		decompressed = ht.decompressString(compressedData, sourceIsImage); // > We need to scatter this!!! <
+		
+		if (my_rank == 0) 
+		{
+			endTime = chrono::high_resolution_clock::now();
+			times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
+		}
 	}
 	
-	//--We get the 90* percentile of the runs
-    std::sort(times, times + EXECUTION_TIMES);
-    int decompression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
-    double decompression_percentile_value = times[decompression_percentile_index];
+	if (my_rank == 0)
+	{
+		//--We get the 90* percentile of the runs
+	    std::sort(times, times + EXECUTION_TIMES);
+	    int decompression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
+	    double decompression_percentile_value = times[decompression_percentile_index];
 	
-	delete[] times;
+		delete[] times;
 	
-	cout << "Executed compression for [90* percentile]: " << compression_percentile_value / 1000000 << "ms" << endl;
+		cout << "Executed compression for [90* percentile]: " << compression_percentile_value / 1000000 << "ms" << endl;
+		
+		cout << "Executed decompression for [90* percentile]: " << decompression_percentile_value / 1000000 << "ms" << endl;
+	}
 	
-	cout << "Executed decompression for [90* percentile]: " << decompression_percentile_value / 1000000 << "ms" << endl;
-	
-	if (writeResultFiles) 
+	if (my_rank == 0 && writeResultFiles) 
 	{
 		//--We write the decompressed data
 	    writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
@@ -181,7 +201,7 @@ int main(int argc, char** argv)
 	    writer.close();
 	}
 	
-	AnalizeCompressionRatio(fileContent, compressedData, decompressed);
+	if (my_rank == 0) AnalizeCompressionRatio(fileContent, compressedData, decompressed);
 	
 	MPI_Finalize();
 }
