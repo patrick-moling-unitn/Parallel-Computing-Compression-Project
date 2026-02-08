@@ -72,10 +72,6 @@ int main(int argc, char** argv)
 	
 	huffmantool ht;
 	
-	/*
-	ht.compressFile(filename, "compressed.data");
-	ht.decompressFile("compressed.data", "decompressed_"+filename, filename);*/
-	
 	//--First we read the file
     std::ifstream reader;
 	reader.open(filename, std::ios::in | std::ios::binary);
@@ -90,11 +86,11 @@ int main(int argc, char** argv)
     }
     bool sourceIsImage = ht.isImageFile(filename);
 	
+	//--We allocate the variables for calculating the latency
 	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
-	
-	//*This is gonna be very useful later on for MPI! Just split the string into N chunks.
-	
 	double* times = new double[EXECUTION_TIMES];
+	
+	//--We run for [EXECUTION_TIMES] times the compression algorithm
 	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
 		startTime = std::chrono::high_resolution_clock::now();
@@ -103,17 +99,18 @@ int main(int argc, char** argv)
 		times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 	}
 	
+	//--We get the 90* percentile of the runs
     std::sort(times, times + EXECUTION_TIMES);
-    int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1);  // 90* percentile
+    int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
     double compression_percentile_value = times[compression_percentile_index];
 	
-	//--Then we write the compressed data
+	//--We write the compressed data
     std::ofstream writer;
     writer.open("compressed.data", std::ios::out | std::ios::binary | std::ios::trunc);
     writer.write(compressedData.data(), compressedData.size());
     writer.close();
     
-    //*Also useful for MPI splitting
+	//--We run for [EXECUTION_TIMES] times the decompression algorithm
 	string decompressed;
     for (int i = 0; i < EXECUTION_TIMES; i++){
 		startTime = std::chrono::high_resolution_clock::now();
@@ -122,8 +119,9 @@ int main(int argc, char** argv)
 		times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 	}
 	
+	//--We get the 90* percentile of the runs
     std::sort(times, times + EXECUTION_TIMES);
-    int decompression_percentile_index = 0.9 * (EXECUTION_TIMES - 1);  // 90* percentile
+    int decompression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
     double decompression_percentile_value = times[decompression_percentile_index];
 	
 	delete[] times;
@@ -132,13 +130,10 @@ int main(int argc, char** argv)
 	
 	cout << "Executed decompression for [90* percentile]: " << decompression_percentile_value / 1000000 << "ms" << endl;
 	
-	//--Then we write the decompressed data
+	//--We write the decompressed data
     writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
     writer.write(decompressed.data(), decompressed.size());
     writer.close();
 	
-	//cout << ht.decompressString(compressedData) << endl;
 	AnalizeCompressionRatio(fileContent, compressedData, decompressed);
-
-	//ht.benchmark("test.txt");
 }

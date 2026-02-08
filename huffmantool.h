@@ -415,14 +415,10 @@ std::string huffmantool::decompressFile(std::string compressedFile, std::string 
 //ChatGPT Helped in rewriting the compression just for a string - very good understanding of streams was the key
 std::string huffmantool::compressString(const std::string &input, bool sourceIsImage)
 {
-    // Mappa per l'indice nel vettore
     std::unordered_map<char, int> *index = new std::unordered_map<char, int>;
     std::vector<cfp *> freq_store;
     int numChars = 0;
     
-    //std::cout << "A";
-    
-    // Passo 1: Creiamo la mappa delle frequenze
     if (sourceIsImage){
 		#pragma omp parallel
 		{
@@ -474,11 +470,6 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		    std::unordered_map<char,int> local_index;
 		    std::vector<cfp*> local_freq_store;  
 		    
-    		/*#pragma omp single
-	        {
-    			std::cout << "B";
-    		}*/	
-    
 			#pragma omp for
 	        for	(int i=0; i < input.length(); i++)
 	        {
@@ -496,11 +487,6 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		            local_index.insert({value, pos});
 	            }
 	        }
-	        
-    		/*#pragma omp single
-	        {
-    			std::cout << "C";
-    		}*/	
 	        
 	        #pragma omp critical
 		    {
@@ -522,24 +508,19 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		}
     }
     
-    //std::cout << "D";
-	    
 	delete index;
 
     if (freq_store.size() <= 1) {
         std::cout << "INFO: No need for encryption\n";
-        return "";  // Se c'e' solo un carattere, non serve compressione
+        return "";
     }
 
-    // Creazione della coda di priorita' per i nodi di Huffman
     std::priority_queue<cfp *, std::vector<cfp *>, pairComparator> freq_sorted;
     
     for (auto i : freq_store) {
         freq_sorted.push(i);
     }
     
-    //std::cout << "E";
-
     cfp *head;
 	while (!freq_sorted.empty()) {
         cfp *first = freq_sorted.top();
@@ -556,28 +537,20 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
             break;
         }
     }
-	
-    //std::cout << "F";
 
     std::unordered_map<char, std::string> charKeyMap;
     traverse(head, charKeyMap, "");
 
-    // Passo 2: Comprimiamo la stringa e memorizziamo il risultato
-    std::ostringstream compressedData(std::ios::binary);  // Usare std::ostringstream per binario
+    std::ostringstream compressedData(std::ios::binary);
     
-    // Scriviamo l'albero in formato binario (pre-order)
     writeTree(compressedData, head);
     
-    // Scriviamo il numero di caratteri
     compressedData.write(reinterpret_cast<char*>(&numChars), sizeof(numChars));
-    
-    //std::cout << "G";
 
 	char chr = 0; 
 	int bufferSize = 8; 
 	
-    // Scriviamo la stringa compressa nel stringstream
-    // THIS PART CAN'T BE PARALLELIZED!
+    // We can't parallelize this since we can't cut the string in an arbitrary manner
     if (sourceIsImage){
         char prev = 0;
         
@@ -627,10 +600,8 @@ std::string huffmantool::compressString(const std::string &input, bool sourceIsI
 		    compressedData.write(&chr, 1);
 		}
     }
-    
-    //std::cout << "H";
 
-    return compressedData.str();  // Restituiamo la stringa compressa
+    return compressedData.str();
 }
 
 //ChatGPT Helped in rewriting the compression just for a string - very good understanding of streams was the key
@@ -639,14 +610,11 @@ std::string huffmantool::decompressString(const std::string &compressedInput, bo
     std::stringstream reader(compressedInput, std::ios::in | std::ios::binary);
     std::stringstream output;
 
-    // Ricreiamo l'albero Huffman
     cfp *head = readTree(reader);
 
-    // Creiamo la mappa chiave->char
     std::unordered_map<std::string, char> keyCharMap;
     traverse(head, keyCharMap, "");
 
-    // Leggiamo il numero totale di caratteri
     int totalChars;
     reader.read(reinterpret_cast<char*>(&totalChars), sizeof(totalChars));
 
