@@ -16,6 +16,12 @@
 #endif
 //<
 
+//For MPI
+//>
+#include <stdio.h>
+#include <mpi.h>
+//<
+
 using namespace std;
 
 #define EXECUTION_TIMES 10
@@ -33,58 +39,92 @@ void AnalizeCompressionRatio(string original, string compressed, string decompre
 
 // 1. Implement a sequential compression algorithm as a baseline.
 // 2. Parallelize the compression process using OpenMP, distributing chunks of the across available threads.
+// 3. Implement a distributed-memory version using MPI, where each process handles a portion of the input data and communicates compressed results to a master node.
 
 int main(int argc, char** argv)
 {
-	bool testing = true;
+    MPI_Init(&argc, &argv);
+    
+    int my_rank, comm_size;
+	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
+	MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
 	
-	if (argc < 3 && !testing){
-		fprintf(stderr, "Usage: %s [to-compress-filename][number-of-threads]\n", argv[0]);
-		exit(1);
-	}else{
-		int targetThreads;
-		if (testing)
-		{
-			string input = "";
-			cout << "Please enter the amount of OpenMP threads to use: ";
-			cin >> input;
-			targetThreads = std::stoi(input);
-		}
-		const int numberOfThreads = testing ? targetThreads : std::stoi(argv[2]);
-		omp_set_num_threads(numberOfThreads);
-	}
-	
-	#pragma omp parallel
-	{
-	    int thread_id = omp_get_thread_num();
-	    int num_threads = omp_get_num_threads();
-	    if (thread_id == 0) {
-	        cout << "Using " << num_threads << " threads for the algorithm" << endl;
-	    }
-	}
-	
+	bool testing = false, openMPlog = true, writeResultFiles = true;
+	const int numberOfThreads;
 	string filename = "";
-	cout << "Please write the filename of what you'd like to compress (including type: '.txt/.raw/.bmp/etc.'): ";
-	cin >> filename;
+	
+	if (my_rank == 0) 
+	{
+		if (argc < 3 && !testing){
+			fprintf(stderr, "Usage: %s [to-compress-filename][number-of-threads]\n", argv[0]);
+			numberOfThreads = -1;
+		}else
+		{
+			if (testing)
+			{
+				string input = "";
+				cout << "Please enter the amount of OpenMP threads to use: ";
+				cin >> input;
+				numberOfThreads = std::stoi(input);
+				
+				cout << "Please write the filename of what you'd like to compress (including type: '.txt/.raw/.bmp/etc.'): ";
+				cin >> filename;
+			}else
+			{
+				numberOfThreads = std::stoi(argv[2]);
+				filename = argv[1];
+			}
+		}
+	}
+	
+	//--We broadcast the number of threads we want to use for each processor
+	MPI_Bcast(&numberOfThreads, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	if (numberOfThreads == -1) MPI_Abort(MPI_COMM_WORLD, 1);
+			
+	omp_set_num_threads(numberOfThreads);
+	
+	if (openMPlog){
+		#pragma omp parallel
+		{
+		    int thread_id = omp_get_thread_num();
+		    int num_threads = omp_get_num_threads();
+		    if (thread_id == 0) {
+		        cout << "Using " << num_threads << " threads for the algorithm [rank:" << my_rank << "]" << endl;
+		    }
+		}
+	}
 	
 	// Website containing free raw pictures https://www.lapseoftheshutter.com/free-raw-landscape-images-for-retouching/ -> cr2 to bmp conversion needed!
 	// Why doesn't this algorithm work with normal jpg/png/cr2? Short answer: those formats are already compressed (jpg/png) and/or ordered (cr2)
 	
 	huffmantool ht;
+	string fileContent = "";
+	bool sourceIsImage, fatalError;
 	
-	//--First we read the file
-    std::ifstream reader;
-	reader.open(filename, std::ios::in | std::ios::binary);
-    if (!reader.is_open())
-    {
-        std::cerr << "ERROR: No such file exists or cannot open file " + filename;
-        return 0;
-    } 
-	string line, fileContent = "";
-    while (getline(reader, line)) {
-    	fileContent += line + "\n";
-    }
-    bool sourceIsImage = ht.isImageFile(filename);
+	if (my_rank == 0) 
+	{
+		//--First we read the file
+	    std::ifstream reader;
+		reader.open(filename, std::ios::in | std::ios::binary);
+	    if (!reader.is_open())
+	    {
+	        std::cerr << "ERROR: No such file exists or cannot open file " + filename;
+	        fatalError = true;
+	    }else
+		{
+			string line;
+		    while (getline(reader, line)) {
+		    	fileContent += line + "\n";
+		    }
+		    sourceIsImage = ht.isImageFile(filename);
+		}
+	}
+	
+	MPI_Bcast(&fatalError, 1, MPI_BOOL, 0, MPI_COMM_WORLD);
+	if (fatalError) MPI_Abort(MPI_COMM_WORLD, 1);
+	
+	//--We broadcast wether the source file is an image or not 
+	MPI_Bcast(&sourceIsImage, 1, MPI_BOOL, 0, MPI_COMM_WORLD);
 	
 	//--We allocate the variables for calculating the latency
 	std::chrono::time_point<std::chrono::high_resolution_clock> startTime, endTime;
@@ -104,11 +144,14 @@ int main(int argc, char** argv)
     int compression_percentile_index = 0.9 * (EXECUTION_TIMES - 1); 
     double compression_percentile_value = times[compression_percentile_index];
 	
-	//--We write the compressed data
-    std::ofstream writer;
-    writer.open("compressed.data", std::ios::out | std::ios::binary | std::ios::trunc);
-    writer.write(compressedData.data(), compressedData.size());
-    writer.close();
+	if (writeResultFiles) 
+	{
+		//--We write the compressed data
+	    std::ofstream writer;
+	    writer.open("compressed_"+filename.substr(0, filename.find_last_of("."))+".data", std::ios::out | std::ios::binary | std::ios::trunc);
+	    writer.write(compressedData.data(), compressedData.size());
+	    writer.close();
+	}
     
 	//--We run for [EXECUTION_TIMES] times the decompression algorithm
 	string decompressed;
@@ -130,10 +173,15 @@ int main(int argc, char** argv)
 	
 	cout << "Executed decompression for [90* percentile]: " << decompression_percentile_value / 1000000 << "ms" << endl;
 	
-	//--We write the decompressed data
-    writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
-    writer.write(decompressed.data(), decompressed.size());
-    writer.close();
+	if (writeResultFiles) 
+	{
+		//--We write the decompressed data
+	    writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
+	    writer.write(decompressed.data(), decompressed.size());
+	    writer.close();
+	}
 	
 	AnalizeCompressionRatio(fileContent, compressedData, decompressed);
+	
+	MPI_Finalize();
 }
