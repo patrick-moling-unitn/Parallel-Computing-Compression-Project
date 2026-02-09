@@ -173,7 +173,7 @@ int main(int argc, char** argv)
 		
 		cout << "Starting size of rank " << my_rank << ": " << localChunk.size() << endl;
 		
-		string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage);
+		string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage) + '\0';
 		
 		int local_compressed_size = localCompressed.size();
 		MPI_Gather(&local_compressed_size, 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -237,25 +237,81 @@ int main(int argc, char** argv)
 	{
 		cout << "Executed compression for [90* percentile]: " << compression_percentile_value / 1000000 << "ms" << endl;
 	}
+	
+	rank_chunk_sizes.resize(comm_size);
+	rank_chunk_offsets.resize(comm_size);
+	vector<int> decompressed_sizes(comm_size), decompressed_offsets(comm_size);
+	
+	if (my_rank == 0)
+	{
+		int index_of;
+		
+		int offset = 0;
+		
+		for (int i = 0; i < comm_size; i++) {
+    		index_of = compressedData.find("\0", offset);
+    		compressedData.erase(index_of, 1);
+    		index_of--;
+    		
+		    rank_chunk_sizes[i] = index_of;  
+		    rank_chunk_offsets[i] = offset;
+		    offset += rank_chunk_sizes[i];
+		}
+	}
+	
+	MPI_Bcast(rank_chunk_sizes.data(), comm_size, MPI_INT, 0, MPI_COMM_WORLD);
+	
+	localSize = rank_chunk_sizes[my_rank]; 
+	localChunk.resize(localSize, 0);
     
 	//--We run for [EXECUTION_TIMES] times the decompression algorithm
-	string decompressed = "";
-	if (my_rank == 0) // < AT THE MOMENT WE ARE JUST TESTING COMPRESSION, DECOMPRESSION WILL BE DONE ONLY BY RANK 0!!!
-	{
-	    for (int i = 0; i < EXECUTION_TIMES; i++){
-			//MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
-			
-			if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
-			
-			decompressed = ht.decompressString(compressedData, sourceIsImage); // > We need to scatter this!!! <
-			
-			cout << "Decompressed: " << decompressed << endl;
-			
-			if (my_rank == 0) 
-			{
-				endTime = chrono::high_resolution_clock::now();
-				times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
-			}
+	vector<char> decompressed_buffer;
+	string decompressedData = "";
+    for (int i = 0; i < EXECUTION_TIMES; i++){
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+		
+		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
+		
+		MPI_Scatterv(compressedData.data(), rank_chunk_sizes.data(), rank_chunk_offsets.data(), MPI_CHAR, 
+					 localChunk.data(), localSize, MPI_CHAR, 0, MPI_COMM_WORLD);
+		
+		string localDecompressed = ht.decompressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage); // > We need to scatter this!!! <
+		
+		cout << "Decompressed: " << decompressed << endl;
+		
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+	    MPI_Abort(MPI_COMM_WORLD, 1);
+	    
+	    int local_decompressed_size = localDecompressed.size();
+		MPI_Gather(&local_decompressed_size, 1, MPI_INT, decompressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		
+		cout << "Decompressed size of rank " << my_rank << ": " << local_decompressed_size << " decompressedData: " << localDecompressed << endl;
+
+	    if (my_rank == 0) {
+	        int offset = 0;
+		    for (int i = 0; i < comm_size; i++) {
+				cout << "Offset " << i << ": " << offset << endl;
+		        decompressed_offsets[i] = offset;
+		        offset += decompressed_sizes[i];
+		    }
+		    decompressed_buffer.resize(offset, 0);
+	    
+			cout << "Final calculated size: " << offset << endl;
+	    }
+	    
+		//MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+	    //MPI_Abort(MPI_COMM_WORLD, 1);
+	    
+		MPI_Gatherv(localCompressed.data(), local_compressed_size, MPI_CHAR, 
+			decompressed_buffer.data(), decompressed_sizes.data(), decompressed_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
+		
+		if (my_rank == 0)
+		    decompressedData = std::string(decompressed_buffer.begin(), decompressed_buffer.end());
+		
+		if (my_rank == 0) 
+		{
+			endTime = chrono::high_resolution_clock::now();
+			times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 		}
 	}
 	
