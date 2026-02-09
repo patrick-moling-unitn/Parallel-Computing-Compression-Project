@@ -52,7 +52,7 @@ int main(int argc, char** argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
 	
-	bool testing = false, openMPlog = true, writeResultFiles = true, debuggingLogs = true, extendedLogs = false;
+	bool testing = false, openMPlog = true, writeResultFiles = true, debuggingLogs = false, extendedLogs = false;
 	int numberOfThreads;
 	string filename = "";
 	
@@ -210,17 +210,20 @@ int main(int argc, char** argv)
 		    compressedData = std::string(compressed_buffer.begin(), compressed_buffer.end());
 		}
 		
-		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
-		if (my_rank == 0 && debuggingLogs) 
+		if (debuggingLogs)
 		{
-			cout << ">>> Iteration [" << i << "], compressed data size: " << compressedData.size();
-			if (extendedLogs)
+			MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+			if (my_rank == 0) 
 			{
-				for (int i=0; i < compressedData.size() && i < 20; i++){
-					cout << ((int)compressedData[i]) << " ";
+				cout << ">>> Iteration [" << i << "], compressed data size: " << compressedData.size();
+				if (extendedLogs)
+				{
+					for (int i=0; i < compressedData.size() && i < 20; i++){
+						cout << ((int)compressedData[i]) << " ";
+					}
 				}
+				cout << endl;
 			}
-			cout << endl;
 		}
 	}
 	
@@ -311,9 +314,11 @@ int main(int argc, char** argv)
 		    decompressedData = std::string(decompressed_buffer.begin(), decompressed_buffer.end());
 		}
 		
-		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
-		if (my_rank == 0 && debuggingLogs) 
-			cout << ">>> Iteration [" << i << "], decompressed data size: " << decompressedData.size() << endl;
+		if (debuggingLogs){
+			MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+			if (my_rank == 0) 
+				cout << ">>> Iteration [" << i << "], decompressed data size: " << decompressedData.size() << endl;
+		}
 	}
 	
 	if (my_rank == 0)
