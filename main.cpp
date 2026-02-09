@@ -158,7 +158,7 @@ int main(int argc, char** argv)
 	vector<char> compressed_buffer;
 	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
-		if (my_rank == 0) {
+		if (my_rank == 0 && i == 0) {
 			cout << "totalSize: " << fileContent.size() << endl;
 			for (int i = 0; i < comm_size; i++) 
 				cout << rank_chunk_sizes[i] << "\t" << rank_chunk_offsets[i] << "\t" << endl;
@@ -173,7 +173,7 @@ int main(int argc, char** argv)
 		
 		cout << "Starting size of rank " << my_rank << ": " << localChunk.size() << endl;
 		
-		string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage) + '\0';
+		string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage) + '\x1E';
 		
 		int local_compressed_size = localCompressed.size();
 		MPI_Gather(&local_compressed_size, 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -210,7 +210,6 @@ int main(int argc, char** argv)
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		if (my_rank == 0) 
 			cout << ">>> Iteration done, compressed data:" << compressedData << endl;
-		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 	}
 	
 	double compression_percentile_value;
@@ -244,18 +243,29 @@ int main(int argc, char** argv)
 	
 	if (my_rank == 0)
 	{
-		int index_of;
+		size_t index_of;
 		
 		int offset = 0;
 		
 		for (int i = 0; i < comm_size; i++) {
-    		index_of = compressedData.find("\0", offset);
-    		compressedData.erase(index_of, 1);
-    		index_of--;
+    		index_of = compressedData.find('\x1E', offset);
     		
-		    rank_chunk_sizes[i] = index_of;  
-		    rank_chunk_offsets[i] = offset;
-		    offset += rank_chunk_sizes[i];
+			if (index_of != std::string::npos)
+			{
+	    		compressedData.erase(index_of, 1);
+	    		
+			    rank_chunk_sizes[i] = index_of - offset;  
+			    rank_chunk_offsets[i] = offset;
+				cout << "compressedData: " << compressedData << "\tindexOf: " << index_of << "\toffset: " << offset << "\tsize: "<< rank_chunk_sizes[i] << endl;
+			}else if (i == comm_size-1)
+			{
+			    rank_chunk_sizes[i] = compressedData.size() - offset;
+			}else 
+			{
+	        	std::cerr << "ERROR: The chunk calculation on the decompression produced an exception!";
+	        	MPI_Abort(MPI_COMM_WORLD, 1);
+			}
+			offset += rank_chunk_sizes[i];
 		}
 	}
 	
@@ -277,10 +287,7 @@ int main(int argc, char** argv)
 		
 		string localDecompressed = ht.decompressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage); // > We need to scatter this!!! <
 		
-		cout << "Decompressed: " << decompressed << endl;
-		
-		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
-	    MPI_Abort(MPI_COMM_WORLD, 1);
+		cout << "Decompressed: " << localDecompressed << endl;
 	    
 	    int local_decompressed_size = localDecompressed.size();
 		MPI_Gather(&local_decompressed_size, 1, MPI_INT, decompressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -302,7 +309,7 @@ int main(int argc, char** argv)
 		//MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 	    //MPI_Abort(MPI_COMM_WORLD, 1);
 	    
-		MPI_Gatherv(localCompressed.data(), local_compressed_size, MPI_CHAR, 
+		MPI_Gatherv(localDecompressed.data(), local_decompressed_size, MPI_CHAR, 
 			decompressed_buffer.data(), decompressed_sizes.data(), decompressed_offsets.data(), MPI_CHAR, 0, MPI_COMM_WORLD);
 		
 		if (my_rank == 0)
@@ -313,6 +320,10 @@ int main(int argc, char** argv)
 			endTime = chrono::high_resolution_clock::now();
 			times[i] = chrono::duration_cast<chrono::nanoseconds>(endTime - startTime).count();
 		}
+		
+		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
+		if (my_rank == 0) 
+			cout << ">>> Iteration done, decompressed data:" << decompressedData << endl;
 	}
 	
 	if (my_rank == 0)
@@ -333,11 +344,11 @@ int main(int argc, char** argv)
 	{
 		//--We write the decompressed data
 	    writer.open("decompressed_"+filename, std::ios::out | std::ios::binary | std::ios::trunc);
-	    writer.write(decompressed.data(), decompressed.size());
+	    writer.write(decompressedData.data(), decompressedData.size());
 	    writer.close();
 	}
 	
-	if (my_rank == 0) AnalizeCompressionRatio(fileContent, compressedData, decompressed);
+	if (my_rank == 0) AnalizeCompressionRatio(fileContent, compressedData, decompressedData);
 	
 	MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 	MPI_Finalize();
