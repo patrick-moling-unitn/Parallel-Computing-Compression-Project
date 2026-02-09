@@ -9,6 +9,8 @@
 
 #include <algorithm>  //std::sort
 
+#include <cstring> //memcpy
+
 //For OpenMP
 //>
 #ifdef _OPENMP
@@ -50,7 +52,7 @@ int main(int argc, char** argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
 	
-	bool testing = false, openMPlog = true, writeResultFiles = true, debuggingLogs = true;
+	bool testing = false, openMPlog = true, writeResultFiles = true, debuggingLogs = true, extendedLogs = false;
 	int numberOfThreads;
 	string filename = "";
 	
@@ -147,6 +149,11 @@ int main(int argc, char** argv)
 		    rank_chunk_sizes[i] = chunkSize + (i < disparity ? 1 : 0);  
 		    rank_chunk_offsets[i] = offset;
 		    offset += rank_chunk_sizes[i];
+		    
+		    if (rank_chunk_sizes[i] == 0){
+	        	std::cerr << "ERROR: The chunk calculation on the compression produced an exception!";
+	        	MPI_Abort(MPI_COMM_WORLD, 1);
+			}
 		}
 	}
 	
@@ -160,6 +167,12 @@ int main(int argc, char** argv)
 	vector<char> compressed_buffer;
 	string compressedData;
 	for (int i = 0; i < EXECUTION_TIMES; i++){
+		if (debuggingLogs && my_rank == 0 && i == 0) {
+			cout << "totalSize: " << fileContent.size() << endl;
+			for (int i = 0; i < comm_size; i++) 
+				cout << rank_chunk_sizes[i] << "\t" << rank_chunk_offsets[i] << "\t" << endl;
+		}
+		
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		
 		if (my_rank == 0) startTime = std::chrono::high_resolution_clock::now();
@@ -167,7 +180,13 @@ int main(int argc, char** argv)
 		MPI_Scatterv(fileContent.data(), rank_chunk_sizes.data(), rank_chunk_offsets.data(), MPI_CHAR, 
 					 localChunk.data(), localSize, MPI_CHAR, 0, MPI_COMM_WORLD);
 		
-		string localCompressed = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage) + '\x1E';
+		string payload = ht.compressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage);
+		
+		uint32_t length = payload.size();
+		
+		string localCompressed;
+		localCompressed.append(reinterpret_cast<char*>(&length), sizeof(length));
+		localCompressed.append(payload);
 		
 		int local_compressed_size = localCompressed.size();
 		MPI_Gather(&local_compressed_size, 1, MPI_INT, compressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
@@ -194,9 +213,12 @@ int main(int argc, char** argv)
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		if (my_rank == 0 && debuggingLogs) 
 		{
-			cout << ">>> Iteration [" << i << "], compressed data: ";
-			for (int i=0; i < compressedData.size(); i++){
-				cout << ((int)compressedData[i]) << " ";
+			cout << ">>> Iteration [" << i << "], compressed data size: " << compressedData.size();
+			if (extendedLogs)
+			{
+				for (int i=0; i < compressedData.size() && i < 20; i++){
+					cout << ((int)compressedData[i]) << " ";
+				}
 			}
 			cout << endl;
 		}
@@ -228,29 +250,17 @@ int main(int argc, char** argv)
 	
 	if (my_rank == 0)
 	{
-		size_t index_of;
-		
 		int offset = 0;
 		
 		for (int i = 0; i < comm_size; i++) {
-    		index_of = compressedData.find('\x1E', offset);
-    		
-			if (index_of != std::string::npos)
-			{
-	    		compressedData.erase(index_of, 1);
-	    		
-			    rank_chunk_sizes[i] = index_of - offset;  
-			    rank_chunk_offsets[i] = offset;
-				//cout << "compressedData: " << compressedData << "\tindexOf: " << index_of << "\toffset: " << offset << "\tsize: "<< rank_chunk_sizes[i] << endl;
-			}else if (i == comm_size-1)
-			{
-			    rank_chunk_sizes[i] = compressedData.size() - offset;
-			}else 
-			{
-	        	std::cerr << "ERROR: The chunk calculation on the decompression produced an exception!";
-	        	MPI_Abort(MPI_COMM_WORLD, 1);
-			}
-			offset += rank_chunk_sizes[i];
+			uint32_t length;
+	
+		    memcpy(&length, compressed_buffer.data() + offset, sizeof(length));
+		    int prefix = sizeof(length);
+		    offset += prefix; //Skip prefix
+			rank_chunk_sizes[i] = length;  
+			rank_chunk_offsets[i] = offset;
+		    offset += length;
 		}
 	}
 	
@@ -269,19 +279,26 @@ int main(int argc, char** argv)
 		
 		MPI_Scatterv(compressedData.data(), rank_chunk_sizes.data(), rank_chunk_offsets.data(), MPI_CHAR, 
 					 localChunk.data(), localSize, MPI_CHAR, 0, MPI_COMM_WORLD);
-		
+					 
 		string localDecompressed = ht.decompressString(std::string(localChunk.begin(), localChunk.end()), sourceIsImage); 
 	    
 	    int local_decompressed_size = localDecompressed.size();
 		MPI_Gather(&local_decompressed_size, 1, MPI_INT, decompressed_sizes.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+		
+		if (extendedLogs)
+			cout << "Decompressed size of rank " << my_rank << ": " << local_decompressed_size << endl;
 
 	    if (my_rank == 0) {
 	        int offset = 0;
 		    for (int i = 0; i < comm_size; i++) {
+		    	if (extendedLogs)
+		    		cout << "Offset " << i << ": " << offset << endl;
 		        decompressed_offsets[i] = offset;
 		        offset += decompressed_sizes[i];
 		    }
 		    decompressed_buffer.resize(offset, 0);
+		    if (extendedLogs)
+				cout << "Final calculated size: " << offset << endl;
 	    }
 	    
 		MPI_Gatherv(localDecompressed.data(), local_decompressed_size, MPI_CHAR, 
@@ -296,7 +313,7 @@ int main(int argc, char** argv)
 		
 		MPI_Barrier(MPI_COMM_WORLD); // Wait for all the processes
 		if (my_rank == 0 && debuggingLogs) 
-			cout << ">>> Iteration [" << i << "], decompressed data:" << decompressedData << endl;
+			cout << ">>> Iteration [" << i << "], decompressed data size: " << decompressedData.size() << endl;
 	}
 	
 	if (my_rank == 0)
