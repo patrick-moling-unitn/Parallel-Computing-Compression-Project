@@ -27,14 +27,14 @@ using namespace std;
 #define EXECUTION_TIMES 10
 
 void AnalizeCompressionRatio(string original, string compressed, string decompressed){
-	float originalSize = sizeof(original) * original.size(), compressedSize = sizeof(compressed) * compressed.size();
-	float compressionRatio = (1 - compressedSize / originalSize) * 100;
+	float originalSize = (float)original.size(), compressedSize = (float)compressed.size();
+	float compressionRatio = (1 - ((float)compressedSize / originalSize)) * 100.0f;
 	cout << "--------------------------------" << endl;
 	string dataStatus = original == decompressed ? "working as expected! [Success]" : "corrupting the original data! [Error]";
 	cout << "Data decompression is " << dataStatus << endl;
 	cout << "Original size is: " << originalSize << " bytes" << endl;
 	cout << "Compressed size is: " << compressedSize << " bytes" << endl;
-	cout << "Compression ratio is: " << compressionRatio << "%";
+	cout << "Compression ratio is: " << compressionRatio << "%" << endl;
 	cout << "--------------------------------" << endl;
 }
 
@@ -50,7 +50,7 @@ int main(int argc, char** argv)
 	MPI_Comm_rank(MPI_COMM_WORLD, &my_rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &comm_size);
 	
-	bool testing = false, openMPlog = true, writeResultFiles = true, debuggingLogs = false;
+	bool testing = false, openMPlog = true, writeResultFiles = true, debuggingLogs = true;
 	int numberOfThreads;
 	string filename = "";
 	
@@ -115,7 +115,8 @@ int main(int argc, char** argv)
 		{
 			string line;
 		    while (getline(reader, line)) {
-		    	fileContent += line + "\n";
+		    	if (fileContent.size() > 0) fileContent += "\n";
+		    	fileContent += line;
 		    }
 		    sourceIsImage = ht.isImageFile(filename);
 		}
